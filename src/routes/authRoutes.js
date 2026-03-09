@@ -4,6 +4,7 @@ function createAuthRoutes(controller, authenticateToken) {
   const router = express.Router();
 
   router.post("/auth/validate-login", controller.validateLogin);
+  router.post("/auth/superadmin/login", controller.superAdminLogin);
   router.post("/auth/logout", authenticateToken, controller.logout);
 
   return router;
