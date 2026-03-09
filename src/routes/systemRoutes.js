@@ -57,7 +57,11 @@ function createSystemRoutes(controller, authenticateToken) {
     authenticateToken,
     controller.itAdminUsers,
   );
-  router.post("/school/validate-code", apiRateLimiter, controller.validateSchoolCode);
+  router.post(
+    "/school/validate-code",
+    apiRateLimiter,
+    controller.validateSchoolCode,
+  );
 
   return router;
 }

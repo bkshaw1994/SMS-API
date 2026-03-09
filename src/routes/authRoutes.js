@@ -5,7 +5,11 @@ function createAuthRoutes(controller, authenticateToken) {
   const router = express.Router();
   const authRateLimiter = createAuthRateLimiter();
 
-  router.post("/auth/validate-login", authRateLimiter, controller.validateLogin);
+  router.post(
+    "/auth/validate-login",
+    authRateLimiter,
+    controller.validateLogin,
+  );
   router.post(
     "/auth/superadmin/login",
     authRateLimiter,
