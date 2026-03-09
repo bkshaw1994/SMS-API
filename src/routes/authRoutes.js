@@ -1,10 +1,26 @@
 const express = require("express");
+const { createAuthRateLimiter } = require("../middlewares/rateLimit");
 
 function createAuthRoutes(controller, authenticateToken) {
   const router = express.Router();
+  const authRateLimiter = createAuthRateLimiter();
 
-  router.post("/auth/validate-login", controller.validateLogin);
-  router.post("/auth/logout", authenticateToken, controller.logout);
+  router.post(
+    "/auth/validate-login",
+    authRateLimiter,
+    controller.validateLogin,
+  );
+  router.post(
+    "/auth/superadmin/login",
+    authRateLimiter,
+    controller.superAdminLogin,
+  );
+  router.post(
+    "/auth/logout",
+    authRateLimiter,
+    authenticateToken,
+    controller.logout,
+  );
 
   return router;
 }
