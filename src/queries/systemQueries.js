@@ -321,6 +321,72 @@ const FIND_STUDENTS_PK_COLUMN = `
   LIMIT 1;
 `;
 
+const FIND_STUDENTS_SECTION_ID_COLUMN = `
+  SELECT column_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'students'
+    AND column_name IN ('section_id', 'sectionid')
+  ORDER BY CASE
+    WHEN column_name = 'section_id' THEN 1
+    WHEN column_name = 'sectionid' THEN 2
+    ELSE 99
+  END
+  LIMIT 1;
+`;
+
+const FIND_SECTIONS_TABLE = `
+  SELECT table_name
+  FROM information_schema.tables
+  WHERE table_schema = 'public'
+    AND table_name = 'sections'
+  LIMIT 1;
+`;
+
+const FIND_SECTIONS_PK_COLUMN = `
+  SELECT column_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'sections'
+    AND column_name IN ('section_id', 'id')
+  ORDER BY CASE
+    WHEN column_name = 'section_id' THEN 1
+    WHEN column_name = 'id' THEN 2
+    ELSE 99
+  END
+  LIMIT 1;
+`;
+
+const FIND_SECTIONS_NAME_COLUMN = `
+  SELECT column_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'sections'
+    AND column_name IN ('section_name', 'name', 'title', 'section')
+  ORDER BY CASE
+    WHEN column_name = 'section_name' THEN 1
+    WHEN column_name = 'name' THEN 2
+    WHEN column_name = 'title' THEN 3
+    WHEN column_name = 'section' THEN 4
+    ELSE 99
+  END
+  LIMIT 1;
+`;
+
+const FIND_SECTIONS_CLASS_ID_COLUMN = `
+  SELECT column_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'sections'
+    AND column_name IN ('class_id', 'classid')
+  ORDER BY CASE
+    WHEN column_name = 'class_id' THEN 1
+    WHEN column_name = 'classid' THEN 2
+    ELSE 99
+  END
+  LIMIT 1;
+`;
+
 const FIND_STUDENT_ENROLLMENTS_TABLE = `
   SELECT table_name
   FROM information_schema.tables
@@ -459,6 +525,26 @@ function listClassIdToNameQuery(classPkColumn, classNameColumn) {
   `;
 }
 
+function listSectionClassMappingsBySectionIdsQuery({
+  sectionPkColumn,
+  sectionNameColumn,
+  sectionClassIdColumn,
+  classPkColumn,
+  classNameColumn,
+}) {
+  return `
+    SELECT
+      s."${sectionPkColumn}"::text AS section_id_value,
+      s."${sectionNameColumn}"::text AS section_name_value,
+      s."${sectionClassIdColumn}"::text AS class_id_value,
+      c."${classNameColumn}"::text AS class_name_value
+    FROM "sections" s
+    LEFT JOIN "classes" c
+      ON c."${classPkColumn}"::text = s."${sectionClassIdColumn}"::text
+    WHERE s."${sectionPkColumn}"::text = ANY($1::text[]);
+  `;
+}
+
 function listEnrollmentClassMappingsQuery({
   schoolFilterColumn,
   studentIdColumn,
@@ -575,6 +661,11 @@ module.exports = {
   FIND_STUDENTS_SCHOOL_CODE_COLUMN,
   FIND_STUDENTS_CLASS_COLUMN,
   FIND_STUDENTS_PK_COLUMN,
+  FIND_STUDENTS_SECTION_ID_COLUMN,
+  FIND_SECTIONS_TABLE,
+  FIND_SECTIONS_PK_COLUMN,
+  FIND_SECTIONS_NAME_COLUMN,
+  FIND_SECTIONS_CLASS_ID_COLUMN,
   FIND_STUDENT_ENROLLMENTS_TABLE,
   FIND_ENROLLMENTS_SCHOOL_ID_COLUMN,
   FIND_ENROLLMENTS_SCHOOL_CODE_COLUMN,
@@ -592,6 +683,7 @@ module.exports = {
   listSchoolsForSuperAdminQuery,
   listStudentsForSchoolQuery,
   listClassIdToNameQuery,
+  listSectionClassMappingsBySectionIdsQuery,
   listEnrollmentClassMappingsQuery,
   listRolesQuery,
   listUsersForSchoolQuery,

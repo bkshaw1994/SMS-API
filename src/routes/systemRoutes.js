@@ -12,6 +12,16 @@ function createSystemRoutes(controller, authenticateToken) {
     authenticateToken,
     controller.superAdminSchools,
   );
+  router.post(
+    "/superadmin/schools",
+    authenticateToken,
+    controller.superAdminAddSchool,
+  );
+  router.post(
+    "/superadmin/schools/owner",
+    authenticateToken,
+    controller.superAdminAddOwner,
+  );
   router.get(
     "/superadmin/schools/:schoolCode/students/classwise",
     authenticateToken,
