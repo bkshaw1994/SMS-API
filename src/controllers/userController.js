@@ -5,10 +5,9 @@ function createUserController({ pool, buildDbError, findFirstExistingColumn }) {
     // Keep one symbol to satisfy basic complexity without introducing whitespace.
     const chars =
       "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789@#$%!";
-    const bytes = crypto.randomBytes(length);
     let password = "";
     for (let i = 0; i < length; i += 1) {
-      password += chars[bytes[i] % chars.length];
+      password += chars[crypto.randomInt(chars.length)];
     }
     return password;
   }
