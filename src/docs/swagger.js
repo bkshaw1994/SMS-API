@@ -11,6 +11,40 @@ function getSwaggerSpec(port) {
           "SMS API with health, metadata, school-code and login validation endpoints",
       },
       servers: [{ url: `http://localhost:${port}` }],
+      tags: [
+        {
+          name: "Auth",
+          description: "Authentication and session endpoints",
+        },
+        {
+          name: "System",
+          description: "Health checks and system metadata endpoints",
+        },
+        {
+          name: "SuperAdmin",
+          description: "Endpoints accessible to SUPERADMIN role",
+        },
+        {
+          name: "Owner",
+          description: "Endpoints intended for OWNER role workflows",
+        },
+        {
+          name: "ITAdmin",
+          description: "Endpoints accessible to ITADMIN role",
+        },
+        {
+          name: "Teacher",
+          description: "Endpoints accessible to TEACHER role",
+        },
+        {
+          name: "Parent",
+          description: "Endpoints intended for PARENT role workflows",
+        },
+        {
+          name: "Student",
+          description: "Endpoints intended for STUDENT role workflows",
+        },
+      ],
       components: {
         securitySchemes: {
           bearerAuth: {
@@ -28,6 +62,7 @@ function getSwaggerSpec(port) {
     "/health": {
       get: {
         summary: "API health check",
+        tags: ["System"],
         responses: {
           200: { description: "API is running" },
         },
@@ -36,6 +71,7 @@ function getSwaggerSpec(port) {
     "/db/health": {
       get: {
         summary: "Database connectivity check",
+        tags: ["System"],
         responses: {
           200: { description: "Database is reachable" },
           500: { description: "Database connection failed" },
@@ -45,6 +81,7 @@ function getSwaggerSpec(port) {
     "/tables": {
       get: {
         summary: "List public schema tables",
+        tags: ["System"],
         responses: {
           200: { description: "List of table names" },
           500: { description: "Database query failed" },
@@ -54,6 +91,7 @@ function getSwaggerSpec(port) {
     "/roles": {
       get: {
         summary: "Fetch roles filtered by JWT role",
+        tags: ["System"],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
@@ -70,6 +108,7 @@ function getSwaggerSpec(port) {
       get: {
         summary:
           "SUPERADMIN-only endpoint to list schools with school_name, school_code, owner, status, and created_by",
+        tags: ["SuperAdmin"],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
@@ -83,6 +122,7 @@ function getSwaggerSpec(port) {
       },
       post: {
         summary: "SUPERADMIN-only endpoint to add a school",
+        tags: ["SuperAdmin"],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -160,6 +200,7 @@ function getSwaggerSpec(port) {
     "/superadmin/schools/owner": {
       post: {
         summary: "SUPERADMIN-only endpoint to add an OWNER for any school",
+        tags: ["SuperAdmin", "Owner"],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -203,6 +244,7 @@ function getSwaggerSpec(port) {
       get: {
         summary:
           "Class-section wise student count using students.section_id -> sections -> classes",
+        tags: ["SuperAdmin", "Student"],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -236,6 +278,7 @@ function getSwaggerSpec(port) {
     "/superadmin/schools/{schoolCode}/teachers": {
       get: {
         summary: "SUPERADMIN-only teacher details for a school",
+        tags: ["SuperAdmin", "Teacher"],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -262,6 +305,7 @@ function getSwaggerSpec(port) {
     "/superadmin/schools/{schoolCode}/parents": {
       get: {
         summary: "SUPERADMIN-only parent details for a school",
+        tags: ["SuperAdmin", "Parent"],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -288,6 +332,7 @@ function getSwaggerSpec(port) {
     "/superadmin/schools/{schoolCode}/owners-itadmin": {
       get: {
         summary: "SUPERADMIN-only OWNER and ITADMIN details for a school",
+        tags: ["SuperAdmin", "Owner", "ITAdmin"],
         security: [{ bearerAuth: [] }],
         parameters: [
           {
@@ -314,6 +359,7 @@ function getSwaggerSpec(port) {
     "/itadmin/users": {
       get: {
         summary: "List users for ITADMIN's school",
+        tags: ["ITAdmin"],
         security: [{ bearerAuth: [] }],
         responses: {
           200: {
@@ -331,6 +377,7 @@ function getSwaggerSpec(port) {
     "/school/validate-code": {
       post: {
         summary: "Validate school code",
+        tags: ["System"],
         requestBody: {
           required: true,
           content: {
@@ -355,6 +402,7 @@ function getSwaggerSpec(port) {
     "/auth/validate-login": {
       post: {
         summary: "Validate login details for an entered school",
+        tags: ["Auth"],
         requestBody: {
           required: true,
           content: {
@@ -384,6 +432,7 @@ function getSwaggerSpec(port) {
     "/auth/superadmin/login": {
       post: {
         summary: "SUPERADMIN login without school code verification",
+        tags: ["Auth", "SuperAdmin"],
         requestBody: {
           required: true,
           content: {
@@ -413,6 +462,7 @@ function getSwaggerSpec(port) {
     "/users": {
       post: {
         summary: "Add user",
+        tags: ["SuperAdmin", "Owner", "ITAdmin"],
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -444,9 +494,158 @@ function getSwaggerSpec(port) {
         },
       },
     },
+    "/teacher/classes-assigned": {
+      get: {
+        summary: "TEACHER-only endpoint to list assigned classes and sections",
+        tags: ["Teacher"],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description:
+              "Resolves JWT userId to teachers.teacher_id using teachers.user_id, then returns section_id, class_name, and section_name rows assigned to that teacher",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    teacherId: { type: "integer", example: 1 },
+                    classes: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          section_id: { type: "integer", example: 12 },
+                          class_name: { type: "string", example: "10" },
+                          section_name: { type: "string", example: "A" },
+                        },
+                      },
+                    },
+                  },
+                },
+                examples: {
+                  assignedSections: {
+                    summary: "Assigned sections for logged-in teacher",
+                    value: {
+                      teacherId: 1,
+                      classes: [
+                        {
+                          section_id: 12,
+                          class_name: "10",
+                          section_name: "A",
+                        },
+                        {
+                          section_id: 13,
+                          class_name: "10",
+                          section_name: "B",
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description:
+              "Unauthorized (missing/invalid token or missing userId in token)",
+          },
+          403: { description: "Forbidden (caller is not TEACHER)" },
+          404: {
+            description: "No teacher record found for the logged-in user",
+          },
+          500: { description: "Database query failed" },
+        },
+      },
+    },
+    "/teacher/sections/{sectionId}/students": {
+      get: {
+        summary:
+          "TEACHER-only endpoint to list students for an assigned section",
+        tags: ["Teacher"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: "path",
+            name: "sectionId",
+            required: true,
+            schema: { type: "string" },
+            description: "Section ID to fetch students for",
+          },
+        ],
+        responses: {
+          200: {
+            description:
+              "Resolves JWT userId to teachers.teacher_id, verifies the section belongs to that teacher, then returns students for the given section_id",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    teacherId: { type: "integer", example: 1 },
+                    sectionId: { type: "string", example: "12" },
+                    students: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          student_id: { type: "integer", example: 101 },
+                          user_id: { type: "integer", example: 220 },
+                          admission_no: { type: "string", example: "ADM001" },
+                          roll_no: { type: "integer", example: 1 },
+                          name: { type: "string", example: "Rahul Sharma" },
+                          email: {
+                            type: "string",
+                            example: "rahul@example.com",
+                          },
+                          phone: { type: "string", example: "9876543210" },
+                          whatsapp: { type: "string", example: "9876543210" },
+                        },
+                      },
+                    },
+                  },
+                },
+                examples: {
+                  sectionWiseStudents: {
+                    summary: "Students for one section",
+                    value: {
+                      teacherId: 1,
+                      sectionId: "12",
+                      students: [
+                        {
+                          student_id: 101,
+                          user_id: 220,
+                          admission_no: "ADM001",
+                          roll_no: 1,
+                          name: "Rahul Sharma",
+                          email: "rahul@example.com",
+                          phone: "9876543210",
+                          whatsapp: "9876543210",
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: "Missing sectionId" },
+          401: {
+            description:
+              "Unauthorized (missing/invalid token or missing userId in token)",
+          },
+          403: { description: "Forbidden (caller is not TEACHER)" },
+          404: {
+            description:
+              "No teacher record found for the logged-in user, or the section is not assigned to that teacher",
+          },
+          500: { description: "Database query failed" },
+        },
+      },
+    },
     "/auth/logout": {
       post: {
         summary: "Logout current user",
+        tags: ["Auth"],
         security: [{ bearerAuth: [] }],
         responses: {
           200: { description: "Logout success" },
