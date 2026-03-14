@@ -58,6 +58,30 @@ function createSystemRoutes(controller, authenticateToken) {
     controller.itAdminUsers,
   );
   router.post(
+    "/itadmin/classes",
+    apiRateLimiter,
+    authenticateToken,
+    controller.itAdminAddClass,
+  );
+  router.get(
+    "/itadmin/classes-teachers",
+    apiRateLimiter,
+    authenticateToken,
+    controller.itAdminClassesAndTeachers,
+  );
+  router.put(
+    "/itadmin/sections/:sectionId",
+    apiRateLimiter,
+    authenticateToken,
+    controller.itAdminUpdateSection,
+  );
+  router.post(
+    "/itadmin/sections",
+    apiRateLimiter,
+    authenticateToken,
+    controller.itAdminCreateSection,
+  );
+  router.post(
     "/school/validate-code",
     apiRateLimiter,
     controller.validateSchoolCode,

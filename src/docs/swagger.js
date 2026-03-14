@@ -374,6 +374,168 @@ function getSwaggerSpec(port) {
         },
       },
     },
+    "/itadmin/classes": {
+      post: {
+        summary: "Create class for ITADMIN's school",
+        tags: ["ITAdmin"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["class_name"],
+                properties: {
+                  class_name: { type: "number", example: 10 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description:
+              "Class created successfully. created_by is taken from JWT userId.",
+          },
+          400: {
+            description:
+              "Invalid request body or token payload (missing schoolCode when required)",
+          },
+          401: { description: "Unauthorized (missing/invalid token/userId)" },
+          403: { description: "Forbidden (caller is not ITADMIN)" },
+          404: { description: "School not found for token schoolCode" },
+          409: { description: "Class already exists" },
+          500: { description: "Database insert failed" },
+        },
+      },
+    },
+    "/itadmin/classes-teachers": {
+      get: {
+        summary: "Fetch classes and teachers for ITADMIN's school",
+        tags: ["ITAdmin", "Teacher"],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description:
+              "Returns class list (from classes table) and teacher list (from teachers table) for caller's school",
+          },
+          400: { description: "Invalid token payload (missing schoolCode)" },
+          401: { description: "Unauthorized (missing/invalid token)" },
+          403: { description: "Forbidden (caller is not ITADMIN)" },
+          404: { description: "School not found for token schoolCode" },
+          500: { description: "Database query failed" },
+        },
+      },
+    },
+    "/itadmin/sections/{sectionId}": {
+      put: {
+        summary: "Update section with teacher, class and name",
+        tags: ["ITAdmin", "Teacher"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: "path",
+            name: "sectionId",
+            required: true,
+            schema: { type: "string" },
+            description: "Section id to update",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["teacher_id", "class_id", "section_name"],
+                properties: {
+                  teacher_id: { type: "string", example: "12" },
+                  teacherId: {
+                    type: "string",
+                    example: "12",
+                    description: "Alias for teacher_id",
+                  },
+                  class_id: { type: "string", example: "8" },
+                  classId: {
+                    type: "string",
+                    example: "8",
+                    description: "Alias for class_id",
+                  },
+                  section_name: { type: "string", example: "A" },
+                  sectionName: {
+                    type: "string",
+                    example: "A",
+                    description: "Alias for section_name",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description:
+              "Section updated successfully in sections table. created_by is updated from JWT userId.",
+          },
+          400: { description: "Invalid request body/classId/teacherId" },
+          401: { description: "Unauthorized (missing/invalid token/userId)" },
+          403: { description: "Forbidden (caller is not ITADMIN)" },
+          404: { description: "School or section not found" },
+          500: { description: "Database update failed" },
+        },
+      },
+    },
+    "/itadmin/sections": {
+      post: {
+        summary: "Create section with teacher, class and name",
+        tags: ["ITAdmin", "Teacher"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["teacherId", "classId", "sectionName"],
+                properties: {
+                  teacherId: { type: "string", example: "12" },
+                  teacher_id: {
+                    type: "string",
+                    example: "12",
+                    description: "Alias for teacherId",
+                  },
+                  classId: { type: "string", example: "8" },
+                  class_id: {
+                    type: "string",
+                    example: "8",
+                    description: "Alias for classId",
+                  },
+                  sectionName: { type: "string", example: "A" },
+                  section_name: {
+                    type: "string",
+                    example: "A",
+                    description: "Alias for sectionName",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description:
+              "Section created successfully in sections table. created_by is taken from JWT userId.",
+          },
+          400: { description: "Invalid request body/classId/teacherId" },
+          401: { description: "Unauthorized (missing/invalid token/userId)" },
+          403: { description: "Forbidden (caller is not ITADMIN)" },
+          404: { description: "School not found for token schoolCode" },
+          409: { description: "Section already exists" },
+          500: { description: "Database insert failed" },
+        },
+      },
+    },
     "/school/validate-code": {
       post: {
         summary: "Validate school code",
@@ -496,13 +658,24 @@ function getSwaggerSpec(port) {
     },
     "/teacher/classes-assigned": {
       get: {
-        summary: "TEACHER-only endpoint to list assigned classes and sections",
+        summary:
+          "List assigned classes for teacher, or school classes + teachers when school_ID is passed",
         tags: ["Teacher"],
         security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            in: "query",
+            name: "school_ID",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "If provided, API returns class list and teacher list for that school. Supports school id or school code value.",
+          },
+        ],
         responses: {
           200: {
             description:
-              "Resolves JWT userId to teachers.teacher_id using teachers.user_id, then returns section_id, class_name, and section_name rows assigned to that teacher",
+              "Without school_ID: returns assigned sections for logged-in teacher. With school_ID: returns classes and teachers for the requested school.",
             content: {
               "application/json": {
                 schema: {
@@ -541,17 +714,55 @@ function getSwaggerSpec(port) {
                       ],
                     },
                   },
+                  schoolClassesAndTeachers: {
+                    summary: "Classes and teachers for requested school_ID",
+                    value: {
+                      school_id: "1",
+                      school_code: "ABC001",
+                      classCount: 3,
+                      teacherCount: 2,
+                      classes: [
+                        {
+                          class_id: "1",
+                          class_name: "10",
+                        },
+                        {
+                          class_id: "2",
+                          class_name: "9",
+                        },
+                      ],
+                      teachers: [
+                        {
+                          teacher_id: "12",
+                          name: "Aman Sharma",
+                          email: "aman@school.com",
+                          phone: "9999999999",
+                        },
+                        {
+                          teacher_id: "13",
+                          name: "Neha Gupta",
+                          email: "neha@school.com",
+                          phone: "8888888888",
+                        },
+                      ],
+                    },
+                  },
                 },
               },
             },
           },
+          400: { description: "Invalid request" },
           401: {
             description:
               "Unauthorized (missing/invalid token or missing userId in token)",
           },
-          403: { description: "Forbidden (caller is not TEACHER)" },
+          403: {
+            description:
+              "Forbidden (invalid role or cross-school access for non-SUPERADMIN)",
+          },
           404: {
-            description: "No teacher record found for the logged-in user",
+            description:
+              "Teacher record not found for token userId or school not found",
           },
           500: { description: "Database query failed" },
         },

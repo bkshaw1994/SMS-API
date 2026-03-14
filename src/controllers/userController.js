@@ -310,6 +310,295 @@ function createUserController({ pool, buildDbError, findFirstExistingColumn }) {
   async function teacherAssignedClasses(req, res) {
     const requesterRole = getRequesterRole(req);
 
+    const requestedSchoolId =
+      typeof req.query?.school_ID === "string" ||
+      typeof req.query?.school_ID === "number"
+        ? String(req.query.school_ID).trim()
+        : typeof req.query?.schoolId === "string" ||
+            typeof req.query?.schoolId === "number"
+          ? String(req.query.schoolId).trim()
+          : typeof req.query?.school_id === "string" ||
+              typeof req.query?.school_id === "number"
+            ? String(req.query.school_id).trim()
+            : "";
+
+    if (requestedSchoolId) {
+      const allowedRoles = ["SUPERADMIN", "OWNER", "ITADMIN", "TEACHER"];
+      if (!allowedRoles.includes(requesterRole)) {
+        return res.status(403).json({
+          error: "Forbidden",
+          details:
+            "Only SUPERADMIN, OWNER, ITADMIN, or TEACHER can access this endpoint with school_ID",
+        });
+      }
+
+      try {
+        const schoolPkColumn = await findFirstExistingColumn(pool, "school", [
+          "school_id",
+          "id",
+        ]);
+        const schoolCodeColumn = await findFirstExistingColumn(pool, "school", [
+          "school_code",
+          "schoolcode",
+          "code",
+        ]);
+
+        if (!schoolPkColumn && !schoolCodeColumn) {
+          return res.status(500).json({
+            error: "Failed to fetch school data",
+            details:
+              "No supported school id/code columns found in table 'school'",
+          });
+        }
+
+        let schoolResult = { rowCount: 0, rows: [] };
+        if (schoolPkColumn) {
+          schoolResult = await pool.query(
+            `
+              SELECT
+                "${schoolPkColumn}"::text AS school_pk,
+                ${schoolCodeColumn ? `"${schoolCodeColumn}"::text` : `NULL::text`} AS school_code
+              FROM "school"
+              WHERE "${schoolPkColumn}"::text = $1::text
+              LIMIT 1;
+            `,
+            [requestedSchoolId],
+          );
+        }
+
+        if (schoolResult.rowCount === 0 && schoolCodeColumn) {
+          schoolResult = await pool.query(
+            `
+              SELECT
+                ${schoolPkColumn ? `"${schoolPkColumn}"::text` : `NULL::text`} AS school_pk,
+                "${schoolCodeColumn}"::text AS school_code
+              FROM "school"
+              WHERE LOWER("${schoolCodeColumn}"::text) = LOWER($1)
+              LIMIT 1;
+            `,
+            [requestedSchoolId],
+          );
+        }
+
+        if (schoolResult.rowCount === 0) {
+          return res.status(404).json({
+            error: "School not found",
+            school_ID: requestedSchoolId,
+          });
+        }
+
+        const resolvedSchoolPk = schoolResult.rows[0].school_pk || null;
+        const resolvedSchoolCode = schoolResult.rows[0].school_code || null;
+
+        if (requesterRole !== "SUPERADMIN") {
+          const tokenSchoolCode =
+            typeof req.user?.schoolCode === "string"
+              ? req.user.schoolCode.trim()
+              : "";
+          if (
+            tokenSchoolCode &&
+            resolvedSchoolCode &&
+            tokenSchoolCode.toLowerCase() !== resolvedSchoolCode.toLowerCase()
+          ) {
+            return res.status(403).json({
+              error: "Forbidden",
+              details: "You can only access data for your own school",
+            });
+          }
+        }
+
+        const classIdColumn = await findFirstExistingColumn(pool, "classes", [
+          "class_id",
+          "id",
+        ]);
+        const classNameColumn = await findFirstExistingColumn(pool, "classes", [
+          "class_name",
+          "name",
+          "title",
+          "class",
+        ]);
+        if (!classNameColumn) {
+          return res.status(500).json({
+            error: "Failed to fetch classes",
+            details: "No supported class name column found in table 'classes'",
+          });
+        }
+
+        const classSchoolIdColumn = await findFirstExistingColumn(
+          pool,
+          "classes",
+          ["school_id", "schoolid"],
+        );
+        const classSchoolCodeColumn = await findFirstExistingColumn(
+          pool,
+          "classes",
+          ["school_code", "schoolcode"],
+        );
+
+        let classWhereSql = "";
+        const classValues = [];
+        if (classSchoolIdColumn && resolvedSchoolPk) {
+          classWhereSql = `WHERE "${classSchoolIdColumn}"::text = $1::text`;
+          classValues.push(resolvedSchoolPk);
+        } else if (classSchoolCodeColumn && resolvedSchoolCode) {
+          classWhereSql = `WHERE "${classSchoolCodeColumn}"::text = $1::text`;
+          classValues.push(resolvedSchoolCode);
+        }
+
+        const classesResult = await pool.query(
+          `
+            SELECT
+              ${classIdColumn ? `"${classIdColumn}"::text` : `NULL::text`} AS class_id,
+              "${classNameColumn}"::text AS class_name
+            FROM "classes"
+            ${classWhereSql}
+            ORDER BY class_name NULLS LAST;
+          `,
+          classValues,
+        );
+
+        const teacherTableResult = await pool.query(
+          `
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'teachers'
+            LIMIT 1;
+          `,
+        );
+
+        if (teacherTableResult.rowCount === 0) {
+          return res.status(500).json({
+            error: "Failed to fetch teachers",
+            details: "Table 'teachers' not found",
+          });
+        }
+
+        const teacherIdColumn = await findFirstExistingColumn(
+          pool,
+          "teachers",
+          ["teacher_id", "id"],
+        );
+        const teacherNameColumn = await findFirstExistingColumn(
+          pool,
+          "teachers",
+          ["name", "teacher_name", "full_name"],
+        );
+        const teacherSchoolIdColumn = await findFirstExistingColumn(
+          pool,
+          "teachers",
+          ["school_id", "schoolid"],
+        );
+        const teacherSchoolCodeColumn = await findFirstExistingColumn(
+          pool,
+          "teachers",
+          ["school_code", "schoolcode", "code"],
+        );
+        const teacherUserIdColumn = await findFirstExistingColumn(
+          pool,
+          "teachers",
+          ["user_id", "userid"],
+        );
+
+        const usersTableResult = await pool.query(
+          `
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'users'
+            LIMIT 1;
+          `,
+        );
+        const usersExists = usersTableResult.rowCount > 0;
+        const userPkColumn = usersExists
+          ? await findFirstExistingColumn(pool, "users", ["user_id", "id"])
+          : null;
+        const userNameColumn = usersExists
+          ? await findFirstExistingColumn(pool, "users", [
+              "name",
+              "full_name",
+              "user_name",
+              "username",
+            ])
+          : null;
+        const userEmailColumn = usersExists
+          ? await findFirstExistingColumn(pool, "users", [
+              "email",
+              "email_id",
+              "mail",
+            ])
+          : null;
+        const userPhoneColumn = usersExists
+          ? await findFirstExistingColumn(pool, "users", [
+              "phone",
+              "mobile",
+              "phone_number",
+              "contact_no",
+              "whatsapp",
+            ])
+          : null;
+
+        const canJoinUsers =
+          usersExists && teacherUserIdColumn && userPkColumn && userNameColumn;
+        const teacherNameSelectSql = teacherNameColumn
+          ? `t."${teacherNameColumn}"::text`
+          : canJoinUsers
+            ? `u."${userNameColumn}"::text`
+            : `NULL::text`;
+        const teacherEmailSelectSql = canJoinUsers
+          ? userEmailColumn
+            ? `u."${userEmailColumn}"::text`
+            : `NULL::text`
+          : `NULL::text`;
+        const teacherPhoneSelectSql = canJoinUsers
+          ? userPhoneColumn
+            ? `u."${userPhoneColumn}"::text`
+            : `NULL::text`
+          : `NULL::text`;
+        const teacherJoinSql = canJoinUsers
+          ? `LEFT JOIN "users" u ON u."${userPkColumn}"::text = t."${teacherUserIdColumn}"::text`
+          : "";
+
+        let teacherWhereSql = "";
+        const teacherValues = [];
+        if (teacherSchoolIdColumn && resolvedSchoolPk) {
+          teacherWhereSql = `WHERE t."${teacherSchoolIdColumn}"::text = $1::text`;
+          teacherValues.push(resolvedSchoolPk);
+        } else if (teacherSchoolCodeColumn && resolvedSchoolCode) {
+          teacherWhereSql = `WHERE t."${teacherSchoolCodeColumn}"::text = $1::text`;
+          teacherValues.push(resolvedSchoolCode);
+        }
+
+        const teachersResult = await pool.query(
+          `
+            SELECT
+              ${teacherIdColumn ? `t."${teacherIdColumn}"::text` : `NULL::text`} AS teacher_id,
+              ${teacherNameSelectSql} AS name,
+              ${teacherEmailSelectSql} AS email,
+              ${teacherPhoneSelectSql} AS phone
+            FROM "teachers" t
+            ${teacherJoinSql}
+            ${teacherWhereSql}
+            ORDER BY name NULLS LAST;
+          `,
+          teacherValues,
+        );
+
+        return res.json({
+          school_id: resolvedSchoolPk,
+          school_code: resolvedSchoolCode,
+          classCount: classesResult.rowCount,
+          teacherCount: teachersResult.rowCount,
+          classes: classesResult.rows,
+          teachers: teachersResult.rows,
+        });
+      } catch (error) {
+        return res
+          .status(500)
+          .json(buildDbError(error, "Failed to fetch classes and teachers"));
+      }
+    }
+
     if (requesterRole !== "TEACHER") {
       return res.status(403).json({
         error: "Forbidden",
