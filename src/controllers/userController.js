@@ -12,6 +12,31 @@ function createUserController({ pool, buildDbError, findFirstExistingColumn }) {
     return password;
   }
 
+  function getRequesterRole(req) {
+    return String(req.user?.role || "")
+      .trim()
+      .toUpperCase();
+  }
+
+  function getRequesterUserId(req) {
+    return typeof req.user?.userId === "string" ||
+      typeof req.user?.userId === "number"
+      ? String(req.user.userId).trim()
+      : "";
+  }
+
+  async function resolveTeacherIdByUserId(userId) {
+    return pool.query(
+      `
+        SELECT teacher_id
+        FROM teachers
+        WHERE user_id = $1
+        LIMIT 1;
+      `,
+      [userId],
+    );
+  }
+
   async function addUser(req, res) {
     const schoolCode =
       typeof req.body?.schoolCode === "string" ||
@@ -282,8 +307,165 @@ function createUserController({ pool, buildDbError, findFirstExistingColumn }) {
     }
   }
 
+  async function teacherAssignedClasses(req, res) {
+    const requesterRole = getRequesterRole(req);
+
+    if (requesterRole !== "TEACHER") {
+      return res.status(403).json({
+        error: "Forbidden",
+        details: "Only TEACHER can access this endpoint",
+      });
+    }
+
+    const userId = getRequesterUserId(req);
+
+    if (!userId) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        details: "Token does not contain userId",
+      });
+    }
+
+    try {
+      const teacherResult = await resolveTeacherIdByUserId(userId);
+
+      if (teacherResult.rowCount === 0) {
+        return res.status(404).json({
+          error: "Teacher not found",
+          details: "No teacher record is mapped to the logged-in user",
+          userId,
+        });
+      }
+
+      const teacherId = teacherResult.rows[0].teacher_id;
+      const result = await pool.query(
+        `
+          SELECT
+            s.section_id,
+            c.class_name,
+            s.section_name
+          FROM sections s
+          JOIN classes c
+            ON s.class_id = c.class_id
+          WHERE s.class_teacher_id = $1
+          ORDER BY c.class_name, s.section_name;
+        `,
+        [teacherId],
+      );
+
+      return res.json({
+        teacherId,
+        classes: result.rows,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to fetch teacher assigned classes"));
+    }
+  }
+
+  async function studentsBySection(req, res) {
+    const requesterRole = getRequesterRole(req);
+
+    if (requesterRole !== "TEACHER") {
+      return res.status(403).json({
+        error: "Forbidden",
+        details: "Only TEACHER can access this endpoint",
+      });
+    }
+
+    const userId = getRequesterUserId(req);
+    const sectionId =
+      typeof req.params?.sectionId === "string" ||
+      typeof req.params?.sectionId === "number"
+        ? String(req.params.sectionId).trim()
+        : "";
+
+    if (!userId) {
+      return res.status(401).json({
+        error: "Unauthorized",
+        details: "Token does not contain userId",
+      });
+    }
+
+    if (!sectionId) {
+      return res.status(400).json({
+        error: "sectionId is required",
+      });
+    }
+
+    try {
+      const teacherResult = await resolveTeacherIdByUserId(userId);
+
+      if (teacherResult.rowCount === 0) {
+        return res.status(404).json({
+          error: "Teacher not found",
+          details: "No teacher record is mapped to the logged-in user",
+          userId,
+        });
+      }
+
+      const teacherId = teacherResult.rows[0].teacher_id;
+
+      const sectionAccessResult = await pool.query(
+        `
+          SELECT section_id
+          FROM sections
+          WHERE section_id = $1
+            AND class_teacher_id = $2
+          LIMIT 1;
+        `,
+        [sectionId, teacherId],
+      );
+
+      if (sectionAccessResult.rowCount === 0) {
+        return res.status(404).json({
+          error: "Section not found",
+          details:
+            "No section is assigned to the logged-in teacher for this sectionId",
+          sectionId,
+          teacherId,
+        });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT
+            s.student_id,
+            s.user_id,
+            s.admission_no,
+            se.roll_no,
+            u.name,
+            u.email,
+            u.phone,
+            u.whatsapp
+          FROM student_enrollments se
+          JOIN students s
+            ON se.student_id = s.student_id
+          LEFT JOIN users u
+            ON s.user_id = u.user_id
+          WHERE se.section_id = $1
+          ORDER BY se.roll_no NULLS LAST, u.name NULLS LAST, s.student_id;
+        `,
+        [sectionId],
+      );
+
+      return res.json({
+        teacherId,
+        sectionId,
+        students: result.rows,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to fetch students for section"));
+    }
+  }
+
   return {
     addUser,
+    teacherAssignedClasses,
+    studentsBySection,
   };
 }
 
