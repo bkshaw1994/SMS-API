@@ -1755,6 +1755,1031 @@ function createSystemController({ pool, buildDbError }) {
     }
   }
 
+  async function itAdminAddClass(req, res) {
+    try {
+      const requesterRole = String(req.user?.role || "")
+        .trim()
+        .toUpperCase();
+      if (requesterRole !== "ITADMIN") {
+        return res.status(403).json({
+          error: "Forbidden",
+          details: "Only ITADMIN can access this endpoint",
+        });
+      }
+
+      const className =
+        typeof req.body?.class_name === "string" ||
+        typeof req.body?.class_name === "number"
+          ? String(req.body.class_name).trim()
+          : typeof req.body?.className === "string" ||
+              typeof req.body?.className === "number"
+            ? String(req.body.className).trim()
+            : "";
+
+      if (!className) {
+        return res.status(400).json({
+          error: "class_name is required",
+        });
+      }
+
+      const createdBy =
+        typeof req.user?.userId === "string" ||
+        typeof req.user?.userId === "number"
+          ? String(req.user.userId).trim()
+          : "";
+
+      if (!createdBy) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          details: "Token does not contain userId",
+        });
+      }
+
+      const classNameResult = await pool.query(FIND_CLASSES_NAME_COLUMN);
+      if (classNameResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to add class",
+          details: "No supported class name column found in table 'classes'",
+        });
+      }
+
+      const classNameColumn = classNameResult.rows[0].column_name;
+      const classCreatedByColumn = await findFirstExistingColumn("classes", [
+        "created_by",
+        "createdby",
+        "created_by_id",
+      ]);
+
+      if (!classCreatedByColumn) {
+        return res.status(500).json({
+          error: "Failed to add class",
+          details: "No supported created_by column found in table 'classes'",
+        });
+      }
+
+      const classSchoolIdColumn = await findFirstExistingColumn("classes", [
+        "school_id",
+        "schoolid",
+      ]);
+      const classSchoolCodeColumn = await findFirstExistingColumn("classes", [
+        "school_code",
+        "schoolcode",
+      ]);
+
+      let schoolResolved = null;
+      if (classSchoolIdColumn || classSchoolCodeColumn) {
+        const tokenSchoolCode =
+          typeof req.user?.schoolCode === "string"
+            ? req.user.schoolCode.trim()
+            : "";
+        if (!tokenSchoolCode) {
+          return res.status(400).json({
+            error: "Invalid token payload",
+            details:
+              "Token does not contain schoolCode required for class-school mapping",
+          });
+        }
+
+        schoolResolved = await resolveSchoolForParamCode(tokenSchoolCode);
+        if (schoolResolved.error) {
+          return res
+            .status(schoolResolved.error.status)
+            .json(schoolResolved.error.payload);
+        }
+
+        if (classSchoolIdColumn && !schoolResolved.schoolPkValue) {
+          return res.status(500).json({
+            error: "Failed to add class",
+            details:
+              "classes table expects school_id but school primary key could not be resolved",
+          });
+        }
+      }
+
+      const duplicateWhere = [
+        `LOWER("${classNameColumn}"::text) = LOWER($1::text)`,
+      ];
+      const duplicateValues = [className];
+
+      if (classSchoolIdColumn && schoolResolved) {
+        duplicateWhere.push(
+          `"${classSchoolIdColumn}"::text = $${duplicateValues.length + 1}::text`,
+        );
+        duplicateValues.push(schoolResolved.schoolPkValue);
+      } else if (classSchoolCodeColumn && schoolResolved) {
+        duplicateWhere.push(
+          `"${classSchoolCodeColumn}"::text = $${duplicateValues.length + 1}::text`,
+        );
+        duplicateValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const duplicateResult = await pool.query(
+        `
+          SELECT 1
+          FROM "classes"
+          WHERE ${duplicateWhere.join(" AND ")}
+          LIMIT 1;
+        `,
+        duplicateValues,
+      );
+
+      if (duplicateResult.rowCount > 0) {
+        return res.status(409).json({
+          error: "Class already exists",
+          class_name: className,
+        });
+      }
+
+      const insertColumns = [
+        `"${classNameColumn}"`,
+        `"${classCreatedByColumn}"`,
+      ];
+      const insertValues = [className, createdBy];
+
+      if (classSchoolIdColumn && schoolResolved) {
+        insertColumns.push(`"${classSchoolIdColumn}"`);
+        insertValues.push(schoolResolved.schoolPkValue);
+      }
+
+      if (classSchoolCodeColumn && schoolResolved) {
+        insertColumns.push(`"${classSchoolCodeColumn}"`);
+        insertValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const valuePlaceholders = insertValues
+        .map((_, index) => `$${index + 1}`)
+        .join(", ");
+      const insertResult = await pool.query(
+        `
+          INSERT INTO "classes" (${insertColumns.join(", ")})
+          VALUES (${valuePlaceholders})
+          RETURNING *;
+        `,
+        insertValues,
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: "Class added successfully",
+        class: insertResult.rows[0],
+      });
+    } catch (error) {
+      return res.status(500).json(buildDbError(error, "Failed to add class"));
+    }
+  }
+
+  async function itAdminClassesAndTeachers(req, res) {
+    try {
+      const requesterRole = String(req.user?.role || "")
+        .trim()
+        .toUpperCase();
+      if (requesterRole !== "ITADMIN") {
+        return res.status(403).json({
+          error: "Forbidden",
+          details: "Only ITADMIN can access this endpoint",
+        });
+      }
+
+      const tokenSchoolCode =
+        typeof req.user?.schoolCode === "string"
+          ? req.user.schoolCode.trim()
+          : "";
+      if (!tokenSchoolCode) {
+        return res.status(400).json({
+          error: "Invalid token payload",
+          details: "Token does not contain schoolCode",
+        });
+      }
+
+      const schoolResolved = await resolveSchoolForParamCode(tokenSchoolCode);
+      if (schoolResolved.error) {
+        return res
+          .status(schoolResolved.error.status)
+          .json(schoolResolved.error.payload);
+      }
+
+      const classPkResult = await pool.query(FIND_CLASSES_PK_COLUMN);
+      const classNameResult = await pool.query(FIND_CLASSES_NAME_COLUMN);
+
+      if (classNameResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to list classes",
+          details: "No supported class name column found in table 'classes'",
+        });
+      }
+
+      const classPkColumn =
+        classPkResult.rowCount > 0 ? classPkResult.rows[0].column_name : null;
+      const classNameColumn = classNameResult.rows[0].column_name;
+      const classSchoolIdColumn = await findFirstExistingColumn("classes", [
+        "school_id",
+        "schoolid",
+      ]);
+      const classSchoolCodeColumn = await findFirstExistingColumn("classes", [
+        "school_code",
+        "schoolcode",
+      ]);
+
+      let classesWhereSql = "";
+      const classesValues = [];
+      if (classSchoolIdColumn && schoolResolved.schoolPkValue) {
+        classesWhereSql = `WHERE "${classSchoolIdColumn}"::text = $1::text`;
+        classesValues.push(schoolResolved.schoolPkValue);
+      } else if (classSchoolCodeColumn) {
+        classesWhereSql = `WHERE "${classSchoolCodeColumn}"::text = $1::text`;
+        classesValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const classesResult = await pool.query(
+        `
+          SELECT
+            ${classPkColumn ? `"${classPkColumn}"::text` : `NULL::text`} AS class_id,
+            "${classNameColumn}"::text AS class_name
+          FROM "classes"
+          ${classesWhereSql}
+          ORDER BY class_name NULLS LAST;
+        `,
+        classesValues,
+      );
+
+      const teacherTableResult = await pool.query(
+        `
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'teachers'
+          LIMIT 1;
+        `,
+      );
+
+      if (teacherTableResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to list teachers",
+          details: "Table 'teachers' not found",
+        });
+      }
+
+      const teacherIdColumn = await findFirstExistingColumn("teachers", [
+        "teacher_id",
+        "id",
+      ]);
+      const teacherNameColumn = await findFirstExistingColumn("teachers", [
+        "name",
+        "teacher_name",
+        "full_name",
+      ]);
+      const teacherSchoolIdColumn = await findFirstExistingColumn("teachers", [
+        "school_id",
+        "schoolid",
+      ]);
+      const teacherSchoolCodeColumn = await findFirstExistingColumn(
+        "teachers",
+        ["school_code", "schoolcode", "code"],
+      );
+      const teacherUserIdColumn = await findFirstExistingColumn("teachers", [
+        "user_id",
+        "userid",
+      ]);
+
+      const usersTableResult = await pool.query(FIND_USERS_TABLE);
+      const usersExists = usersTableResult.rowCount > 0;
+      const userPkColumn = usersExists
+        ? await findFirstExistingColumn("users", ["user_id", "id"])
+        : null;
+      const userNameColumn = usersExists
+        ? await findFirstExistingColumn("users", [
+            "name",
+            "full_name",
+            "user_name",
+            "username",
+          ])
+        : null;
+      const userEmailColumn = usersExists
+        ? await findFirstExistingColumn("users", ["email", "email_id", "mail"])
+        : null;
+      const userPhoneColumn = usersExists
+        ? await findFirstExistingColumn("users", [
+            "phone",
+            "mobile",
+            "phone_number",
+            "contact_no",
+            "whatsapp",
+          ])
+        : null;
+
+      const canJoinUsers =
+        usersExists && teacherUserIdColumn && userPkColumn && userNameColumn;
+
+      const teacherNameSelectSql = teacherNameColumn
+        ? `t."${teacherNameColumn}"::text`
+        : canJoinUsers
+          ? `u."${userNameColumn}"::text`
+          : `NULL::text`;
+      const teacherEmailSelectSql = canJoinUsers
+        ? userEmailColumn
+          ? `u."${userEmailColumn}"::text`
+          : `NULL::text`
+        : `NULL::text`;
+      const teacherPhoneSelectSql = canJoinUsers
+        ? userPhoneColumn
+          ? `u."${userPhoneColumn}"::text`
+          : `NULL::text`
+        : `NULL::text`;
+
+      const teacherJoinSql = canJoinUsers
+        ? `LEFT JOIN "users" u ON u."${userPkColumn}"::text = t."${teacherUserIdColumn}"::text`
+        : "";
+
+      let teachersWhereSql = "";
+      const teachersValues = [];
+      if (teacherSchoolIdColumn && schoolResolved.schoolPkValue) {
+        teachersWhereSql = `WHERE t."${teacherSchoolIdColumn}"::text = $1::text`;
+        teachersValues.push(schoolResolved.schoolPkValue);
+      } else if (teacherSchoolCodeColumn) {
+        teachersWhereSql = `WHERE t."${teacherSchoolCodeColumn}"::text = $1::text`;
+        teachersValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const teachersResult = await pool.query(
+        `
+          SELECT
+            ${teacherIdColumn ? `t."${teacherIdColumn}"::text` : `NULL::text`} AS teacher_id,
+            ${teacherNameSelectSql} AS name,
+            ${teacherEmailSelectSql} AS email,
+            ${teacherPhoneSelectSql} AS phone
+          FROM "teachers" t
+          ${teacherJoinSql}
+          ${teachersWhereSql}
+          ORDER BY name NULLS LAST;
+        `,
+        teachersValues,
+      );
+
+      return res.json({
+        schoolCode: schoolResolved.schoolCodeValue,
+        classCount: classesResult.rowCount,
+        teacherCount: teachersResult.rowCount,
+        classes: classesResult.rows,
+        teachers: teachersResult.rows,
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to fetch classes and teachers"));
+    }
+  }
+
+  async function itAdminUpdateSection(req, res) {
+    try {
+      const requesterRole = String(req.user?.role || "")
+        .trim()
+        .toUpperCase();
+      if (requesterRole !== "ITADMIN") {
+        return res.status(403).json({
+          error: "Forbidden",
+          details: "Only ITADMIN can access this endpoint",
+        });
+      }
+
+      const sectionId =
+        typeof req.params?.sectionId === "string" ||
+        typeof req.params?.sectionId === "number"
+          ? String(req.params.sectionId).trim()
+          : typeof req.body?.sectionId === "string" ||
+              typeof req.body?.sectionId === "number"
+            ? String(req.body.sectionId).trim()
+            : "";
+      const teacherId =
+        typeof req.body?.teacher_id === "string" ||
+        typeof req.body?.teacher_id === "number"
+          ? String(req.body.teacher_id).trim()
+          : typeof req.body?.teacherId === "string" ||
+              typeof req.body?.teacherId === "number"
+            ? String(req.body.teacherId).trim()
+            : "";
+      const classId =
+        typeof req.body?.class_id === "string" ||
+        typeof req.body?.class_id === "number"
+          ? String(req.body.class_id).trim()
+          : typeof req.body?.classId === "string" ||
+              typeof req.body?.classId === "number"
+            ? String(req.body.classId).trim()
+            : "";
+      const sectionName =
+        typeof req.body?.section_name === "string" ||
+        typeof req.body?.section_name === "number"
+          ? String(req.body.section_name).trim()
+          : typeof req.body?.sectionName === "string" ||
+              typeof req.body?.sectionName === "number"
+            ? String(req.body.sectionName).trim()
+            : "";
+
+      if (!sectionId || !teacherId || !classId || !sectionName) {
+        return res.status(400).json({
+          error: "sectionId, teacherId, classId, and sectionName are required",
+        });
+      }
+
+      const createdBy =
+        typeof req.user?.userId === "string" ||
+        typeof req.user?.userId === "number"
+          ? String(req.user.userId).trim()
+          : "";
+      if (!createdBy) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          details: "Token does not contain userId",
+        });
+      }
+
+      const tokenSchoolCode =
+        typeof req.user?.schoolCode === "string"
+          ? req.user.schoolCode.trim()
+          : "";
+      if (!tokenSchoolCode) {
+        return res.status(400).json({
+          error: "Invalid token payload",
+          details: "Token does not contain schoolCode",
+        });
+      }
+
+      const schoolResolved = await resolveSchoolForParamCode(tokenSchoolCode);
+      if (schoolResolved.error) {
+        return res
+          .status(schoolResolved.error.status)
+          .json(schoolResolved.error.payload);
+      }
+
+      const sectionsTableResult = await pool.query(FIND_SECTIONS_TABLE);
+      if (sectionsTableResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details: "Table 'sections' not found",
+        });
+      }
+
+      const sectionPkResult = await pool.query(FIND_SECTIONS_PK_COLUMN);
+      const sectionNameResult = await pool.query(FIND_SECTIONS_NAME_COLUMN);
+      const sectionClassIdResult = await pool.query(
+        FIND_SECTIONS_CLASS_ID_COLUMN,
+      );
+
+      if (
+        sectionPkResult.rowCount === 0 ||
+        sectionNameResult.rowCount === 0 ||
+        sectionClassIdResult.rowCount === 0
+      ) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details:
+            "No supported section id/name/class_id columns found in table 'sections'",
+        });
+      }
+
+      const sectionPkColumn = sectionPkResult.rows[0].column_name;
+      const sectionNameColumn = sectionNameResult.rows[0].column_name;
+      const sectionClassIdColumn = sectionClassIdResult.rows[0].column_name;
+      const sectionTeacherIdColumn = await findFirstExistingColumn("sections", [
+        "class_teacher_id",
+        "class_teacherid",
+        "teacher_id",
+        "teacherid",
+      ]);
+      const sectionCreatedByColumn = await findFirstExistingColumn("sections", [
+        "created_by",
+        "createdby",
+        "created_by_id",
+      ]);
+
+      if (!sectionTeacherIdColumn || !sectionCreatedByColumn) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details:
+            "No supported teacher_id/created_by columns found in table 'sections'",
+        });
+      }
+
+      const sectionSchoolIdColumn = await findFirstExistingColumn("sections", [
+        "school_id",
+        "schoolid",
+      ]);
+      const sectionSchoolCodeColumn = await findFirstExistingColumn(
+        "sections",
+        ["school_code", "schoolcode"],
+      );
+
+      const sectionWhereParts = [`"${sectionPkColumn}"::text = $1::text`];
+      const sectionWhereValues = [sectionId];
+      if (sectionSchoolIdColumn && schoolResolved.schoolPkValue) {
+        sectionWhereParts.push(
+          `"${sectionSchoolIdColumn}"::text = $${sectionWhereValues.length + 1}::text`,
+        );
+        sectionWhereValues.push(schoolResolved.schoolPkValue);
+      } else if (sectionSchoolCodeColumn) {
+        sectionWhereParts.push(
+          `"${sectionSchoolCodeColumn}"::text = $${sectionWhereValues.length + 1}::text`,
+        );
+        sectionWhereValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const sectionExistsResult = await pool.query(
+        `
+          SELECT 1
+          FROM "sections"
+          WHERE ${sectionWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        sectionWhereValues,
+      );
+
+      if (sectionExistsResult.rowCount === 0) {
+        return res.status(404).json({
+          error: "Section not found",
+          sectionId,
+        });
+      }
+
+      const classPkResult = await pool.query(FIND_CLASSES_PK_COLUMN);
+      if (classPkResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details: "No supported class id column found in table 'classes'",
+        });
+      }
+
+      const classPkColumn = classPkResult.rows[0].column_name;
+      const classSchoolIdColumn = await findFirstExistingColumn("classes", [
+        "school_id",
+        "schoolid",
+      ]);
+      const classSchoolCodeColumn = await findFirstExistingColumn("classes", [
+        "school_code",
+        "schoolcode",
+      ]);
+
+      const classWhereParts = [`"${classPkColumn}"::text = $1::text`];
+      const classWhereValues = [classId];
+      if (classSchoolIdColumn && schoolResolved.schoolPkValue) {
+        classWhereParts.push(
+          `"${classSchoolIdColumn}"::text = $${classWhereValues.length + 1}::text`,
+        );
+        classWhereValues.push(schoolResolved.schoolPkValue);
+      } else if (classSchoolCodeColumn) {
+        classWhereParts.push(
+          `"${classSchoolCodeColumn}"::text = $${classWhereValues.length + 1}::text`,
+        );
+        classWhereValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const classExistsResult = await pool.query(
+        `
+          SELECT 1
+          FROM "classes"
+          WHERE ${classWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        classWhereValues,
+      );
+
+      if (classExistsResult.rowCount === 0) {
+        return res.status(400).json({
+          error: "Invalid classId",
+          classId,
+        });
+      }
+
+      const teacherTableResult = await pool.query(
+        `
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'teachers'
+          LIMIT 1;
+        `,
+      );
+      if (teacherTableResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details: "Table 'teachers' not found",
+        });
+      }
+
+      const teacherPkColumn = await findFirstExistingColumn("teachers", [
+        "teacher_id",
+        "id",
+      ]);
+      if (!teacherPkColumn) {
+        return res.status(500).json({
+          error: "Failed to update section",
+          details: "No supported teacher id column found in table 'teachers'",
+        });
+      }
+
+      const teacherSchoolIdColumn = await findFirstExistingColumn("teachers", [
+        "school_id",
+        "schoolid",
+      ]);
+      const teacherSchoolCodeColumn = await findFirstExistingColumn(
+        "teachers",
+        ["school_code", "schoolcode", "code"],
+      );
+
+      const teacherWhereParts = [`"${teacherPkColumn}"::text = $1::text`];
+      const teacherWhereValues = [teacherId];
+      if (teacherSchoolIdColumn && schoolResolved.schoolPkValue) {
+        teacherWhereParts.push(
+          `"${teacherSchoolIdColumn}"::text = $${teacherWhereValues.length + 1}::text`,
+        );
+        teacherWhereValues.push(schoolResolved.schoolPkValue);
+      } else if (teacherSchoolCodeColumn) {
+        teacherWhereParts.push(
+          `"${teacherSchoolCodeColumn}"::text = $${teacherWhereValues.length + 1}::text`,
+        );
+        teacherWhereValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const teacherExistsResult = await pool.query(
+        `
+          SELECT 1
+          FROM "teachers"
+          WHERE ${teacherWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        teacherWhereValues,
+      );
+
+      if (teacherExistsResult.rowCount === 0) {
+        return res.status(400).json({
+          error: "Invalid teacherId",
+          teacherId,
+        });
+      }
+
+      const updateValues = [
+        sectionName,
+        classId,
+        teacherId,
+        createdBy,
+        sectionId,
+      ];
+      const updateWhereParts = [`"${sectionPkColumn}"::text = $5::text`];
+      if (sectionSchoolIdColumn && schoolResolved.schoolPkValue) {
+        updateWhereParts.push(
+          `"${sectionSchoolIdColumn}"::text = $${updateValues.length + 1}::text`,
+        );
+        updateValues.push(schoolResolved.schoolPkValue);
+      } else if (sectionSchoolCodeColumn) {
+        updateWhereParts.push(
+          `"${sectionSchoolCodeColumn}"::text = $${updateValues.length + 1}::text`,
+        );
+        updateValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const updateResult = await pool.query(
+        `
+          UPDATE "sections"
+          SET
+            "${sectionNameColumn}" = $1,
+            "${sectionClassIdColumn}" = $2,
+            "${sectionTeacherIdColumn}" = $3,
+            "${sectionCreatedByColumn}" = $4
+          WHERE ${updateWhereParts.join(" AND ")}
+          RETURNING *;
+        `,
+        updateValues,
+      );
+
+      return res.json({
+        success: true,
+        message: "Section updated successfully",
+        section: updateResult.rows[0],
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to update section"));
+    }
+  }
+
+  async function itAdminCreateSection(req, res) {
+    try {
+      const requesterRole = String(req.user?.role || "")
+        .trim()
+        .toUpperCase();
+      if (requesterRole !== "ITADMIN") {
+        return res.status(403).json({
+          error: "Forbidden",
+          details: "Only ITADMIN can access this endpoint",
+        });
+      }
+
+      const teacherId =
+        typeof req.body?.teacherId === "string" ||
+        typeof req.body?.teacherId === "number"
+          ? String(req.body.teacherId).trim()
+          : typeof req.body?.teacher_id === "string" ||
+              typeof req.body?.teacher_id === "number"
+            ? String(req.body.teacher_id).trim()
+            : "";
+      const classId =
+        typeof req.body?.classId === "string" ||
+        typeof req.body?.classId === "number"
+          ? String(req.body.classId).trim()
+          : typeof req.body?.class_id === "string" ||
+              typeof req.body?.class_id === "number"
+            ? String(req.body.class_id).trim()
+            : "";
+      const sectionName =
+        typeof req.body?.sectionName === "string" ||
+        typeof req.body?.sectionName === "number"
+          ? String(req.body.sectionName).trim()
+          : typeof req.body?.section_name === "string" ||
+              typeof req.body?.section_name === "number"
+            ? String(req.body.section_name).trim()
+            : "";
+
+      if (!teacherId || !classId || !sectionName) {
+        return res.status(400).json({
+          error: "teacher_id, class_id, and section_name are required",
+        });
+      }
+
+      const createdBy =
+        typeof req.user?.userId === "string" ||
+        typeof req.user?.userId === "number"
+          ? String(req.user.userId).trim()
+          : "";
+      if (!createdBy) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          details: "Token does not contain userId",
+        });
+      }
+
+      const tokenSchoolCode =
+        typeof req.user?.schoolCode === "string"
+          ? req.user.schoolCode.trim()
+          : "";
+      if (!tokenSchoolCode) {
+        return res.status(400).json({
+          error: "Invalid token payload",
+          details: "Token does not contain schoolCode",
+        });
+      }
+
+      const schoolResolved = await resolveSchoolForParamCode(tokenSchoolCode);
+      if (schoolResolved.error) {
+        return res
+          .status(schoolResolved.error.status)
+          .json(schoolResolved.error.payload);
+      }
+
+      const sectionsTableResult = await pool.query(FIND_SECTIONS_TABLE);
+      if (sectionsTableResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details: "Table 'sections' not found",
+        });
+      }
+
+      const sectionNameResult = await pool.query(FIND_SECTIONS_NAME_COLUMN);
+      const sectionClassIdResult = await pool.query(
+        FIND_SECTIONS_CLASS_ID_COLUMN,
+      );
+
+      if (
+        sectionNameResult.rowCount === 0 ||
+        sectionClassIdResult.rowCount === 0
+      ) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details:
+            "No supported section name/class_id columns found in table 'sections'",
+        });
+      }
+
+      const sectionNameColumn = sectionNameResult.rows[0].column_name;
+      const sectionClassIdColumn = sectionClassIdResult.rows[0].column_name;
+      const sectionTeacherIdColumn = await findFirstExistingColumn("sections", [
+        "class_teacher_id",
+        "class_teacherid",
+        "teacher_id",
+        "teacherid",
+      ]);
+      const sectionCreatedByColumn = await findFirstExistingColumn("sections", [
+        "created_by",
+        "createdby",
+        "created_by_id",
+      ]);
+
+      if (!sectionTeacherIdColumn || !sectionCreatedByColumn) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details:
+            "No supported teacher_id/created_by columns found in table 'sections'",
+        });
+      }
+
+      const sectionSchoolIdColumn = await findFirstExistingColumn("sections", [
+        "school_id",
+        "schoolid",
+      ]);
+      const sectionSchoolCodeColumn = await findFirstExistingColumn(
+        "sections",
+        ["school_code", "schoolcode"],
+      );
+
+      const classPkResult = await pool.query(FIND_CLASSES_PK_COLUMN);
+      if (classPkResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details: "No supported class id column found in table 'classes'",
+        });
+      }
+
+      const classPkColumn = classPkResult.rows[0].column_name;
+      const classSchoolIdColumn = await findFirstExistingColumn("classes", [
+        "school_id",
+        "schoolid",
+      ]);
+      const classSchoolCodeColumn = await findFirstExistingColumn("classes", [
+        "school_code",
+        "schoolcode",
+      ]);
+
+      const classWhereParts = [`"${classPkColumn}"::text = $1::text`];
+      const classWhereValues = [classId];
+      if (classSchoolIdColumn && schoolResolved.schoolPkValue) {
+        classWhereParts.push(
+          `"${classSchoolIdColumn}"::text = $${classWhereValues.length + 1}::text`,
+        );
+        classWhereValues.push(schoolResolved.schoolPkValue);
+      } else if (classSchoolCodeColumn) {
+        classWhereParts.push(
+          `"${classSchoolCodeColumn}"::text = $${classWhereValues.length + 1}::text`,
+        );
+        classWhereValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const classExistsResult = await pool.query(
+        `
+          SELECT 1
+          FROM "classes"
+          WHERE ${classWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        classWhereValues,
+      );
+
+      if (classExistsResult.rowCount === 0) {
+        return res.status(400).json({
+          error: "Invalid classId",
+          classId,
+        });
+      }
+
+      const teacherTableResult = await pool.query(
+        `
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'teachers'
+          LIMIT 1;
+        `,
+      );
+      if (teacherTableResult.rowCount === 0) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details: "Table 'teachers' not found",
+        });
+      }
+
+      const teacherPkColumn = await findFirstExistingColumn("teachers", [
+        "teacher_id",
+        "id",
+      ]);
+      if (!teacherPkColumn) {
+        return res.status(500).json({
+          error: "Failed to create section",
+          details: "No supported teacher id column found in table 'teachers'",
+        });
+      }
+
+      const teacherSchoolIdColumn = await findFirstExistingColumn("teachers", [
+        "school_id",
+        "schoolid",
+      ]);
+      const teacherSchoolCodeColumn = await findFirstExistingColumn(
+        "teachers",
+        ["school_code", "schoolcode", "code"],
+      );
+
+      const teacherWhereParts = [`"${teacherPkColumn}"::text = $1::text`];
+      const teacherWhereValues = [teacherId];
+      if (teacherSchoolIdColumn && schoolResolved.schoolPkValue) {
+        teacherWhereParts.push(
+          `"${teacherSchoolIdColumn}"::text = $${teacherWhereValues.length + 1}::text`,
+        );
+        teacherWhereValues.push(schoolResolved.schoolPkValue);
+      } else if (teacherSchoolCodeColumn) {
+        teacherWhereParts.push(
+          `"${teacherSchoolCodeColumn}"::text = $${teacherWhereValues.length + 1}::text`,
+        );
+        teacherWhereValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const teacherExistsResult = await pool.query(
+        `
+          SELECT 1
+          FROM "teachers"
+          WHERE ${teacherWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        teacherWhereValues,
+      );
+
+      if (teacherExistsResult.rowCount === 0) {
+        return res.status(400).json({
+          error: "Invalid teacherId",
+          teacherId,
+        });
+      }
+
+      const duplicateWhereParts = [
+        `LOWER("${sectionNameColumn}"::text) = LOWER($1::text)`,
+        `"${sectionClassIdColumn}"::text = $2::text`,
+      ];
+      const duplicateValues = [sectionName, classId];
+
+      if (sectionSchoolIdColumn && schoolResolved.schoolPkValue) {
+        duplicateWhereParts.push(
+          `"${sectionSchoolIdColumn}"::text = $${duplicateValues.length + 1}::text`,
+        );
+        duplicateValues.push(schoolResolved.schoolPkValue);
+      } else if (sectionSchoolCodeColumn) {
+        duplicateWhereParts.push(
+          `"${sectionSchoolCodeColumn}"::text = $${duplicateValues.length + 1}::text`,
+        );
+        duplicateValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const duplicateSectionResult = await pool.query(
+        `
+          SELECT 1
+          FROM "sections"
+          WHERE ${duplicateWhereParts.join(" AND ")}
+          LIMIT 1;
+        `,
+        duplicateValues,
+      );
+
+      if (duplicateSectionResult.rowCount > 0) {
+        return res.status(409).json({
+          error: "Section already exists",
+          sectionName,
+          classId,
+        });
+      }
+
+      const insertColumns = [
+        `"${sectionNameColumn}"`,
+        `"${sectionClassIdColumn}"`,
+        `"${sectionTeacherIdColumn}"`,
+        `"${sectionCreatedByColumn}"`,
+      ];
+      const insertValues = [sectionName, classId, teacherId, createdBy];
+
+      if (sectionSchoolIdColumn && schoolResolved.schoolPkValue) {
+        insertColumns.push(`"${sectionSchoolIdColumn}"`);
+        insertValues.push(schoolResolved.schoolPkValue);
+      }
+
+      if (sectionSchoolCodeColumn) {
+        insertColumns.push(`"${sectionSchoolCodeColumn}"`);
+        insertValues.push(schoolResolved.schoolCodeValue);
+      }
+
+      const insertResult = await pool.query(
+        `
+          INSERT INTO "sections" (${insertColumns.join(", ")})
+          VALUES (${insertValues.map((_, index) => `$${index + 1}`).join(", ")})
+          RETURNING *;
+        `,
+        insertValues,
+      );
+
+      return res.status(201).json({
+        success: true,
+        message: "Section created successfully",
+        section: insertResult.rows[0],
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to create section"));
+    }
+  }
+
   return {
     health,
     dbHealth,
@@ -1769,6 +2794,10 @@ function createSystemController({ pool, buildDbError }) {
     superAdminParents,
     superAdminOwnerAndItAdmin,
     itAdminUsers,
+    itAdminAddClass,
+    itAdminClassesAndTeachers,
+    itAdminUpdateSection,
+    itAdminCreateSection,
   };
 }
 
