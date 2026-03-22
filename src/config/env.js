@@ -2,8 +2,10 @@ const dotenv = require("dotenv");
 
 dotenv.config();
 
+const appPort = Number(process.env.APP_PORT || 3000);
+
 const config = {
-  port: Number(process.env.APP_PORT || 3000),
+  port: appPort,
   host: process.env.APP_HOST || "0.0.0.0",
   databaseUrl: process.env.DATABASE_URL,
   sslEnabled: (process.env.PG_SSL || "true").toLowerCase() === "true",
@@ -17,7 +19,7 @@ const config = {
   smtpFrom: process.env.SMTP_FROM || "",
   resetPasswordBaseUrl:
     process.env.RESET_PASSWORD_BASE_URL ||
-    "https://localhost:3000/reset-password",
+    `http://localhost:${appPort}/auth/reset-password`,
   passwordSaltRounds: Number(process.env.PASSWORD_SALT_ROUNDS || 10),
 };
 

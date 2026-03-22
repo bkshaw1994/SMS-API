@@ -28,8 +28,9 @@ function createEmailClient({ host, port, secure, user, pass, from }) {
     const baseUrl =
       typeof resetPasswordBaseUrl === "string" && resetPasswordBaseUrl.trim()
         ? resetPasswordBaseUrl.trim()
-        : "https://localhost:3000/reset-password";
-    const resetLink = `${baseUrl}?token=${resetToken}`;
+        : "http://localhost:5000/auth/reset-password";
+    const joiner = baseUrl.includes("?") ? "&" : "?";
+    const resetLink = `${baseUrl}${joiner}token=${encodeURIComponent(resetToken)}`;
 
     const text = [
       "Welcome to the School Portal",

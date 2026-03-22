@@ -47,6 +47,7 @@ const authController = createAuthController({
   addTokenToBlacklist,
   jwtSecret: config.jwtSecret,
   jwtExpiresIn: config.jwtExpiresIn,
+  passwordSaltRounds: config.passwordSaltRounds,
 });
 const userDb = createUserDb({
   pool,

@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { hashPassword, verifyPassword } = require("../utils/password");
 
 function createAuthController({
   pool,
@@ -8,7 +9,179 @@ function createAuthController({
   addTokenToBlacklist,
   jwtSecret,
   jwtExpiresIn,
+  passwordSaltRounds = 10,
 }) {
+  function renderResetPasswordDocument({
+    token = "",
+    state = "ready",
+    message = "",
+  }) {
+    const escapedToken = JSON.stringify(String(token || ""));
+    const escapedMessage = JSON.stringify(String(message || ""));
+
+    return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reset Password</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #f4f7fb;
+        color: #1f2937;
+      }
+      .wrap {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: #ffffff;
+        border-radius: 16px;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.12);
+        padding: 28px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+      }
+      p {
+        margin: 0 0 16px;
+        line-height: 1.5;
+      }
+      form {
+        display: grid;
+        gap: 14px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-weight: 600;
+      }
+      input {
+        padding: 12px 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        font-size: 16px;
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: #0f766e;
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: wait;
+        opacity: 0.7;
+      }
+      .status {
+        min-height: 24px;
+        font-size: 14px;
+      }
+      .status.error {
+        color: #b91c1c;
+      }
+      .status.success {
+        color: #047857;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Reset Password</h1>
+        <p id="intro"></p>
+        <form id="reset-form">
+          <label>
+            New password
+            <input id="newPassword" type="password" minlength="8" required />
+          </label>
+          <label>
+            Confirm password
+            <input id="confirmPassword" type="password" minlength="8" required />
+          </label>
+          <button id="submitButton" type="submit">Update password</button>
+        </form>
+        <p id="status" class="status"></p>
+      </div>
+    </div>
+    <script>
+      const token = ${escapedToken};
+      const state = ${JSON.stringify(state)};
+      const message = ${escapedMessage};
+      const form = document.getElementById("reset-form");
+      const statusElement = document.getElementById("status");
+      const introElement = document.getElementById("intro");
+      const submitButton = document.getElementById("submitButton");
+
+      function setStatus(text, kind) {
+        statusElement.textContent = text || "";
+        statusElement.className = kind ? "status " + kind : "status";
+      }
+
+      if (state !== "ready") {
+        introElement.textContent = message || "This reset link is not valid.";
+        form.classList.add("hidden");
+        setStatus("", "");
+      } else {
+        introElement.textContent = "Choose a new password for this account.";
+        if (message) {
+          setStatus(message, "success");
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const newPassword = document.getElementById("newPassword").value;
+        const confirmPassword = document.getElementById("confirmPassword").value;
+
+        submitButton.disabled = true;
+        setStatus("Updating password...", "");
+
+        try {
+          const response = await fetch(window.location.pathname, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ token, newPassword, confirmPassword }),
+          });
+
+          const payload = await response.json();
+
+          if (!response.ok) {
+            setStatus(payload.error || "Failed to reset password", "error");
+            return;
+          }
+
+          form.reset();
+          form.classList.add("hidden");
+          introElement.textContent = payload.message || "Password updated successfully.";
+          setStatus("You can now log in with your new password.", "success");
+        } catch (error) {
+          setStatus("Failed to reach the server. Try again.", "error");
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>`;
+  }
+
   async function resolveUserRole({ userRole, userRoleId }) {
     let resolvedRole = userRole || null;
 
@@ -67,6 +240,232 @@ function createAuthController({
     }
 
     return resolvedRole;
+  }
+
+  async function resolveResetPasswordColumns() {
+    const userIdColumn = await findFirstExistingColumn(pool, "users", [
+      "user_id",
+      "id",
+    ]);
+    const passwordColumn = await findFirstExistingColumn(pool, "users", [
+      "password_hash",
+      "passwordhash",
+      "password",
+      "user_password",
+      "passcode",
+    ]);
+    const tempPasswordHashColumn = await findFirstExistingColumn(
+      pool,
+      "users",
+      ["temp_password_hash"],
+    );
+    const mustChangePasswordColumn = await findFirstExistingColumn(
+      pool,
+      "users",
+      ["must_change_password"],
+    );
+    const resetTokenColumn = await findFirstExistingColumn(pool, "users", [
+      "reset_token",
+    ]);
+    const resetTokenExpiresColumn = await findFirstExistingColumn(
+      pool,
+      "users",
+      ["reset_token_expires"],
+    );
+
+    if (
+      !userIdColumn ||
+      !passwordColumn ||
+      !mustChangePasswordColumn ||
+      !resetTokenColumn ||
+      !resetTokenExpiresColumn
+    ) {
+      const error = new Error("Reset password is not available");
+      error.status = 500;
+      error.details =
+        "Required reset-password columns are missing in table 'users'";
+      throw error;
+    }
+
+    return {
+      userIdColumn,
+      passwordColumn,
+      tempPasswordHashColumn,
+      mustChangePasswordColumn,
+      resetTokenColumn,
+      resetTokenExpiresColumn,
+    };
+  }
+
+  async function findUserByResetToken(resetToken) {
+    const columns = await resolveResetPasswordColumns();
+    const result = await pool.query(
+      `
+        SELECT
+          "${columns.userIdColumn}"::text AS user_id,
+          "${columns.resetTokenExpiresColumn}" AS reset_token_expires
+        FROM "users"
+        WHERE "${columns.resetTokenColumn}" = $1
+        LIMIT 1;
+      `,
+      [resetToken],
+    );
+
+    if (result.rowCount === 0) {
+      return {
+        columns,
+        user: null,
+      };
+    }
+
+    return {
+      columns,
+      user: result.rows[0],
+    };
+  }
+
+  async function renderResetPasswordPage(req, res) {
+    const token =
+      typeof req.query?.token === "string" ? req.query.token.trim() : "";
+
+    if (!token) {
+      return res.status(400).send(
+        renderResetPasswordDocument({
+          state: "error",
+          message: "Missing reset token in the link.",
+        }),
+      );
+    }
+
+    try {
+      const { user } = await findUserByResetToken(token);
+
+      if (!user) {
+        return res.status(400).send(
+          renderResetPasswordDocument({
+            state: "error",
+            message: "This reset link is invalid.",
+          }),
+        );
+      }
+
+      const expiresAt = user.reset_token_expires
+        ? new Date(user.reset_token_expires)
+        : null;
+      if (
+        !expiresAt ||
+        Number.isNaN(expiresAt.getTime()) ||
+        expiresAt <= new Date()
+      ) {
+        return res.status(400).send(
+          renderResetPasswordDocument({
+            state: "error",
+            message: "This reset link has expired.",
+          }),
+        );
+      }
+
+      return res.send(renderResetPasswordDocument({ token }));
+    } catch (error) {
+      return res.status(500).send(
+        renderResetPasswordDocument({
+          state: "error",
+          message:
+            buildDbError(error, "Failed to load reset password page").details ||
+            "Failed to load reset password page.",
+        }),
+      );
+    }
+  }
+
+  async function resetPassword(req, res) {
+    const token =
+      typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const newPassword =
+      typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    const confirmPassword =
+      typeof req.body?.confirmPassword === "string"
+        ? req.body.confirmPassword
+        : "";
+
+    if (!token || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: "token, newPassword, and confirmPassword are required",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: "New password must be at least 8 characters long",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        error: "New password and confirmPassword must match",
+      });
+    }
+
+    try {
+      const { columns, user } = await findUserByResetToken(token);
+
+      if (!user) {
+        return res.status(400).json({
+          error: "Invalid reset token",
+        });
+      }
+
+      const expiresAt = user.reset_token_expires
+        ? new Date(user.reset_token_expires)
+        : null;
+      if (
+        !expiresAt ||
+        Number.isNaN(expiresAt.getTime()) ||
+        expiresAt <= new Date()
+      ) {
+        return res.status(400).json({
+          error: "Reset token has expired",
+        });
+      }
+
+      const passwordHash = await hashPassword(
+        newPassword,
+        Number(passwordSaltRounds),
+      );
+      const setClauses = [
+        `"${columns.passwordColumn}" = $1`,
+        `"${columns.mustChangePasswordColumn}" = $2`,
+        `"${columns.resetTokenColumn}" = $3`,
+        `"${columns.resetTokenExpiresColumn}" = $4`,
+      ];
+      const values = [passwordHash, false, null, null];
+
+      if (columns.tempPasswordHashColumn) {
+        setClauses.push(`"${columns.tempPasswordHashColumn}" = $5`);
+        values.push(null);
+      }
+
+      values.push(user.user_id);
+
+      await pool.query(
+        `
+          UPDATE "users"
+          SET ${setClauses.join(", ")}
+          WHERE "${columns.userIdColumn}"::text = $${values.length}::text;
+        `,
+        values,
+      );
+
+      return res.json({
+        success: true,
+        message: "Password updated successfully",
+      });
+    } catch (error) {
+      const dbError = buildDbError(error, "Failed to reset password");
+      return res.status(error?.status || 500).json({
+        error: dbError.details || dbError.error || "Failed to reset password",
+      });
+    }
   }
 
   async function validateLogin(req, res) {
@@ -251,7 +650,10 @@ function createAuthController({
         });
       }
 
-      const passwordValid = password === String(storedPassword);
+      const passwordValid = await verifyPassword(
+        password,
+        String(storedPassword),
+      );
       if (!passwordValid) {
         return res.json({
           valid: false,
@@ -426,7 +828,11 @@ function createAuthController({
         });
       }
 
-      if (password !== String(storedPassword)) {
+      const passwordValid = await verifyPassword(
+        password,
+        String(storedPassword),
+      );
+      if (!passwordValid) {
         return res.json({
           valid: false,
           reason: "Incorrect password",
@@ -491,6 +897,8 @@ function createAuthController({
   }
 
   return {
+    renderResetPasswordPage,
+    resetPassword,
     validateLogin,
     superAdminLogin,
     logout,

@@ -13,8 +13,27 @@ async function hashPassword(plainTextPassword, saltRounds = 10) {
   return bcrypt.hash(plainTextPassword, saltRounds);
 }
 
+function isBcryptHash(value) {
+  return /^\$2[aby]\$\d{2}\$/.test(String(value || "").trim());
+}
+
+async function verifyPassword(plainTextPassword, storedPassword) {
+  const normalizedStoredPassword = String(storedPassword || "").trim();
+
+  if (!normalizedStoredPassword) {
+    return false;
+  }
+
+  if (isBcryptHash(normalizedStoredPassword)) {
+    return bcrypt.compare(plainTextPassword, normalizedStoredPassword);
+  }
+
+  return plainTextPassword === normalizedStoredPassword;
+}
+
 module.exports = {
   generateTemporaryPassword,
   generateResetToken,
   hashPassword,
+  verifyPassword,
 };
