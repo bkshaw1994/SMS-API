@@ -17,6 +17,10 @@ function getSwaggerSpec(port) {
           description: "Authentication and session endpoints",
         },
         {
+          name: "Dashboard",
+          description: "Role-based dashboard overview endpoints",
+        },
+        {
           name: "System",
           description: "Health checks and system metadata endpoints",
         },
@@ -617,6 +621,90 @@ function getSwaggerSpec(port) {
           },
           400: { description: "Invalid request body" },
           403: { description: "Forbidden (user is not SUPERADMIN)" },
+          500: { description: "Database query failed" },
+        },
+      },
+    },
+    "/dashboard/overview": {
+      get: {
+        summary: "Get dashboard overview based on JWT role",
+        tags: ["Dashboard"],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description:
+              "Returns role-based dashboard data using userId, role, and school context resolved from JWT.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    role: {
+                      type: "string",
+                      example: "TEACHER",
+                      enum: [
+                        "OWNER",
+                        "IT_ADMIN",
+                        "TEACHER",
+                        "PARENT",
+                        "STUDENT",
+                      ],
+                    },
+                    data: {
+                      type: "object",
+                      description:
+                        "Response shape depends on JWT role. OWNER returns totals and notifications; IT_ADMIN returns user/system metrics; TEACHER returns schedule and attendance; PARENT returns children, results, fees, and notifications; STUDENT returns classes, attendance, marks, and exams.",
+                    },
+                  },
+                },
+                examples: {
+                  owner: {
+                    summary: "OWNER overview",
+                    value: {
+                      success: true,
+                      role: "OWNER",
+                      data: {
+                        totalStudents: 1200,
+                        totalTeachers: 80,
+                        totalClasses: 40,
+                        totalRevenue: 2200000,
+                        pendingFees: 150000,
+                        avgAttendance: 92.4,
+                        recentNotifications: [],
+                      },
+                    },
+                  },
+                  teacher: {
+                    summary: "TEACHER overview",
+                    value: {
+                      success: true,
+                      role: "TEACHER",
+                      data: {
+                        todaySchedule: [],
+                        totalClasses: 6,
+                        pendingAttendance: 2,
+                        assignmentsToReview: 0,
+                        notifications: [],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          401: {
+            description:
+              "Unauthorized (missing/invalid token or unresolved school context)",
+          },
+          403: {
+            description:
+              "Forbidden (role is not supported for dashboard access)",
+          },
+          404: {
+            description:
+              "Teacher or student record not found for the authenticated user",
+          },
           500: { description: "Database query failed" },
         },
       },

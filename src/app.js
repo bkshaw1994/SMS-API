@@ -13,13 +13,24 @@ const { getSwaggerSpec } = require("./docs/swagger");
 const { createSystemController } = require("./controllers/systemController");
 const { createAuthController } = require("./controllers/authController");
 const { createUserController } = require("./controllers/userController");
+const {
+  createDashboardController,
+} = require("./controllers/dashboard.controller");
 const { createUserService } = require("./services/userService");
+const { createDashboardService } = require("./services/dashboard.service");
 const { createSystemRoutes } = require("./routes/systemRoutes");
 const { createAuthRoutes } = require("./routes/authRoutes");
 const { createUserRoutes } = require("./routes/userRoutes");
+const { createDashboardRoutes } = require("./routes/dashboard.routes");
 const { createAuthenticateToken } = require("./middlewares/authenticateToken");
 const { createUserDb } = require("./db/userDb");
 const { createEmailClient } = require("./utils/email");
+const {
+  createDashboardRepository,
+} = require("./repositories/dashboard.repository");
+const {
+  createDashboardAuthMiddleware,
+} = require("./middleware/auth.middleware");
 const {
   addTokenToBlacklist,
   isTokenBlacklisted,
@@ -66,19 +77,35 @@ const userService = createUserService({
   resetPasswordBaseUrl: config.resetPasswordBaseUrl,
   passwordSaltRounds: config.passwordSaltRounds,
 });
+const dashboardRepository = createDashboardRepository({
+  pool,
+  findFirstExistingColumn,
+});
+const dashboardService = createDashboardService({
+  dashboardRepository,
+});
 const userController = createUserController({
   pool,
   buildDbError,
   findFirstExistingColumn,
   userService,
 });
+const dashboardController = createDashboardController({
+  dashboardService,
+  buildDbError,
+});
 const authenticateToken = createAuthenticateToken(
   config.jwtSecret,
   isTokenBlacklisted,
 );
+const dashboardAuthMiddleware = createDashboardAuthMiddleware({
+  jwtSecret: config.jwtSecret,
+  dashboardRepository,
+});
 
 app.use(createSystemRoutes(systemController, authenticateToken));
 app.use(createAuthRoutes(authController, authenticateToken));
 app.use(createUserRoutes(userController, authenticateToken));
+app.use(createDashboardRoutes(dashboardController, dashboardAuthMiddleware));
 
 module.exports = app;
