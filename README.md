@@ -44,8 +44,10 @@ npm start
 - `POST /school/validate-code` - Validate school code
 - `POST /auth/validate-login` - Validate login against school
 - `POST /auth/superadmin/login` - SUPERADMIN login
+- `GET /auth/reset-password?token=...` - Open the password reset page from the emailed link
+- `POST /auth/reset-password` - Submit a new password using `{ token, newPassword, confirmPassword }`
 - `POST /auth/logout` - Logout and invalidate JWT token
-- `POST /users` - Add user
+- `POST /users` - Add user with temporary password initialization flow (`password_hash`, `temp_password_hash`, `must_change_password`, `reset_token`, `reset_token_expires`); sends welcome email with temporary password and reset link; does not return temporary password
 - `GET /teacher/classes-assigned` -
   without query: TEACHER-only assigned classes/sections for logged-in teacher;
   with `school_ID` query: returns class list and teacher list for requested school

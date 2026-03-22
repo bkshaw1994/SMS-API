@@ -5,6 +5,12 @@ function createAuthRoutes(controller, authenticateToken) {
   const router = express.Router();
   const authRateLimiter = createAuthRateLimiter();
 
+  router.get("/auth/reset-password", controller.renderResetPasswordPage);
+  router.post(
+    "/auth/reset-password",
+    authRateLimiter,
+    controller.resetPassword,
+  );
   router.post(
     "/auth/validate-login",
     authRateLimiter,

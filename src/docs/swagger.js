@@ -632,7 +632,7 @@ function getSwaggerSpec(port) {
             "application/json": {
               schema: {
                 type: "object",
-                required: ["schoolCode", "name", "email", "phone", "role"],
+                required: ["schoolCode", "name", "email", "role"],
                 properties: {
                   schoolCode: { type: "string", example: "SCH001" },
                   name: { type: "string", example: "John Doe" },
@@ -648,7 +648,7 @@ function getSwaggerSpec(port) {
         responses: {
           201: {
             description:
-              "User added successfully with school_id, name, email, phone, status, role_id, password, and created_by. Response includes generatedPassword.",
+              "User added successfully with password_hash, temp_password_hash, must_change_password=true, reset_token, reset_token_expires, and created_by. Temporary password is emailed to user and is not returned in API response.",
           },
           400: { description: "Invalid request body" },
           401: { description: "Unauthorized (missing token or token userId)" },

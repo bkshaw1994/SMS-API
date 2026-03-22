@@ -13,10 +13,13 @@ const { getSwaggerSpec } = require("./docs/swagger");
 const { createSystemController } = require("./controllers/systemController");
 const { createAuthController } = require("./controllers/authController");
 const { createUserController } = require("./controllers/userController");
+const { createUserService } = require("./services/userService");
 const { createSystemRoutes } = require("./routes/systemRoutes");
 const { createAuthRoutes } = require("./routes/authRoutes");
 const { createUserRoutes } = require("./routes/userRoutes");
 const { createAuthenticateToken } = require("./middlewares/authenticateToken");
+const { createUserDb } = require("./db/userDb");
+const { createEmailClient } = require("./utils/email");
 const {
   addTokenToBlacklist,
   isTokenBlacklisted,
@@ -44,11 +47,31 @@ const authController = createAuthController({
   addTokenToBlacklist,
   jwtSecret: config.jwtSecret,
   jwtExpiresIn: config.jwtExpiresIn,
+  passwordSaltRounds: config.passwordSaltRounds,
+});
+const userDb = createUserDb({
+  pool,
+  findFirstExistingColumn,
+});
+const emailClient = createEmailClient({
+  host: config.smtpHost,
+  port: config.smtpPort,
+  secure: config.smtpSecure,
+  user: config.smtpUser,
+  pass: config.smtpPass,
+  from: config.smtpFrom,
+});
+const userService = createUserService({
+  userDb,
+  emailClient,
+  resetPasswordBaseUrl: config.resetPasswordBaseUrl,
+  passwordSaltRounds: config.passwordSaltRounds,
 });
 const userController = createUserController({
   pool,
   buildDbError,
   findFirstExistingColumn,
+  userService,
 });
 const authenticateToken = createAuthenticateToken(
   config.jwtSecret,
