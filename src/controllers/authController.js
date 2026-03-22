@@ -1,25 +1,10 @@
 const jwt = require("jsonwebtoken");
 const { hashPassword, verifyPassword } = require("../utils/password");
 
-function createAuthController({
-  pool,
-  buildDbError,
-  findFirstExistingColumn,
-  findExistingColumns,
-  addTokenToBlacklist,
-  jwtSecret,
-  jwtExpiresIn,
-  passwordSaltRounds = 10,
-}) {
-  function renderResetPasswordDocument({
-    token = "",
-    state = "ready",
-    message = "",
-  }) {
-    const escapedToken = JSON.stringify(String(token || ""));
-    const escapedMessage = JSON.stringify(String(message || ""));
+function renderResetPasswordDocument({ state = "ready", message = "" }) {
+  const escapedMessage = JSON.stringify(String(message || ""));
 
-    return `<!doctype html>
+  return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -119,13 +104,13 @@ function createAuthController({
       </div>
     </div>
     <script>
-      const token = ${escapedToken};
       const state = ${JSON.stringify(state)};
       const message = ${escapedMessage};
       const form = document.getElementById("reset-form");
       const statusElement = document.getElementById("status");
       const introElement = document.getElementById("intro");
       const submitButton = document.getElementById("submitButton");
+      const token = new URLSearchParams(window.location.search).get("token") || "";
 
       function setStatus(text, kind) {
         statusElement.textContent = text || "";
@@ -152,12 +137,12 @@ function createAuthController({
         setStatus("Updating password...", "");
 
         try {
-          const response = await fetch(window.location.pathname, {
+          const response = await fetch(window.location.pathname + window.location.search, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ token, newPassword, confirmPassword }),
+            body: JSON.stringify({ newPassword, confirmPassword }),
           });
 
           const payload = await response.json();
@@ -180,8 +165,18 @@ function createAuthController({
     </script>
   </body>
 </html>`;
-  }
+}
 
+function createAuthController({
+  pool,
+  buildDbError,
+  findFirstExistingColumn,
+  findExistingColumns,
+  addTokenToBlacklist,
+  jwtSecret,
+  jwtExpiresIn,
+  passwordSaltRounds = 10,
+}) {
   async function resolveUserRole({ userRole, userRoleId }) {
     let resolvedRole = userRole || null;
 
@@ -365,22 +360,23 @@ function createAuthController({
         );
       }
 
-      return res.send(renderResetPasswordDocument({ token }));
-    } catch (error) {
+      return res.send(renderResetPasswordDocument({ state: "ready" }));
+    } catch {
       return res.status(500).send(
         renderResetPasswordDocument({
           state: "error",
-          message:
-            buildDbError(error, "Failed to load reset password page").details ||
-            "Failed to load reset password page.",
+          message: "Failed to load reset password page.",
         }),
       );
     }
   }
 
   async function resetPassword(req, res) {
-    const token =
+    const tokenFromBody =
       typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const tokenFromQuery =
+      typeof req.query?.token === "string" ? req.query.token.trim() : "";
+    const token = tokenFromBody || tokenFromQuery;
     const newPassword =
       typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
     const confirmPassword =
@@ -461,9 +457,8 @@ function createAuthController({
         message: "Password updated successfully",
       });
     } catch (error) {
-      const dbError = buildDbError(error, "Failed to reset password");
       return res.status(error?.status || 500).json({
-        error: dbError.details || dbError.error || "Failed to reset password",
+        error: "Failed to reset password",
       });
     }
   }

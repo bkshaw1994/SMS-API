@@ -1,3 +1,16 @@
+function createInternalError(message, details) {
+  const error = new Error(message);
+  error.status = 500;
+  error.details = details;
+  return error;
+}
+
+function collectMissingColumns(requiredColumns) {
+  return requiredColumns
+    .filter(({ value }) => !value)
+    .map(({ label }) => label);
+}
+
 function createUserDb({ pool, findFirstExistingColumn }) {
   async function resolveSchoolByCode(schoolCode) {
     const schoolCodeColumn = await findFirstExistingColumn(pool, "school", [
@@ -195,54 +208,33 @@ function createUserDb({ pool, findFirstExistingColumn }) {
       "createdby",
     ]);
 
-    const missingColumns = [];
-    if (!userSchoolIdColumn) {
-      missingColumns.push("school_id");
-    }
-    if (!nameColumn) {
-      missingColumns.push("name");
-    }
-    if (!emailColumn) {
-      missingColumns.push("email");
-    }
-    if (!statusColumn) {
-      missingColumns.push("status");
-    }
-    if (!passwordHashColumn) {
-      missingColumns.push("password_hash");
-    }
-    if (!tempPasswordHashColumn) {
-      missingColumns.push("temp_password_hash");
-    }
-    if (!mustChangePasswordColumn) {
-      missingColumns.push("must_change_password");
-    }
-    if (!resetTokenColumn) {
-      missingColumns.push("reset_token");
-    }
-    if (!resetTokenExpiresColumn) {
-      missingColumns.push("reset_token_expires");
-    }
-    if (!createdByColumn) {
-      missingColumns.push("created_by");
-    }
-    if (!roleIdColumn && !roleTextColumn) {
-      missingColumns.push("role_id OR role");
-    }
+    const requiredColumns = [
+      { value: userSchoolIdColumn, label: "school_id" },
+      { value: nameColumn, label: "name" },
+      { value: emailColumn, label: "email" },
+      { value: statusColumn, label: "status" },
+      { value: passwordHashColumn, label: "password_hash" },
+      { value: tempPasswordHashColumn, label: "temp_password_hash" },
+      { value: mustChangePasswordColumn, label: "must_change_password" },
+      { value: resetTokenColumn, label: "reset_token" },
+      { value: resetTokenExpiresColumn, label: "reset_token_expires" },
+      { value: createdByColumn, label: "created_by" },
+      { value: roleIdColumn || roleTextColumn, label: "role_id OR role" },
+    ];
+    const missingColumns = collectMissingColumns(requiredColumns);
 
     if (missingColumns.length > 0) {
-      const error = new Error("Failed to add user");
-      error.status = 500;
-      error.details = `Required columns missing in users table: ${missingColumns.join(", ")}`;
-      throw error;
+      throw createInternalError(
+        "Failed to add user",
+        `Required columns missing in users table: ${missingColumns.join(", ")}`,
+      );
     }
 
     if (roleIdColumn && !roleId) {
-      const error = new Error("Failed to add user");
-      error.status = 500;
-      error.details =
-        "role_id column exists but role id could not be resolved from roles table";
-      throw error;
+      throw createInternalError(
+        "Failed to add user",
+        "role_id column exists but role id could not be resolved from roles table",
+      );
     }
 
     const insertColumns = [
