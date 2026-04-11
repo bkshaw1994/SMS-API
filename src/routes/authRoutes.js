@@ -12,6 +12,22 @@ function createAuthRoutes(controller, authenticateToken) {
     controller.resetPassword,
   );
   router.post(
+    "/auth/change-password",
+    authRateLimiter,
+    authenticateToken,
+    controller.changePassword,
+  );
+  router.post(
+    "/auth/forgot-password",
+    authRateLimiter,
+    controller.forgotPassword,
+  );
+  router.post(
+    "/auth/forgot-password/verify",
+    authRateLimiter,
+    controller.forgotPasswordVerify,
+  );
+  router.post(
     "/auth/validate-login",
     authRateLimiter,
     controller.validateLogin,
