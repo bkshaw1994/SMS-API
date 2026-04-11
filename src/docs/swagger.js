@@ -853,6 +853,130 @@ function getSwaggerSpec(port) {
         },
       },
     },
+    "/auth/change-password": {
+      post: {
+        summary: "Change password for the authenticated user",
+        tags: ["Auth"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["currentPassword", "newPassword", "confirmPassword"],
+                properties: {
+                  currentPassword: {
+                    type: "string",
+                    example: "OldPass@123",
+                    description: "The user's current password",
+                  },
+                  newPassword: {
+                    type: "string",
+                    example: "NewPass@456",
+                    description: "New password (minimum 8 characters)",
+                  },
+                  confirmPassword: {
+                    type: "string",
+                    example: "NewPass@456",
+                    description: "Must match newPassword",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Password changed successfully" },
+          400: {
+            description:
+              "Missing fields, password too short, passwords do not match, or current password is incorrect",
+          },
+          401: { description: "Unauthorized (missing/invalid token)" },
+          404: { description: "User not found" },
+          500: { description: "Failed to change password" },
+        },
+      },
+    },
+    "/auth/forgot-password": {
+      post: {
+        summary: "Request a password reset OTP sent to the user's email",
+        tags: ["Auth"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["email"],
+                properties: {
+                  email: {
+                    type: "string",
+                    example: "user@example.com",
+                    description: "Registered email address of the user",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description:
+              "Always returns a generic success message regardless of whether the email is registered (prevents email enumeration). A 6-digit OTP valid for 10 minutes is sent when the email matches a user.",
+          },
+          400: { description: "email is required" },
+          500: { description: "Failed to process forgot password request" },
+        },
+      },
+    },
+    "/auth/forgot-password/verify": {
+      post: {
+        summary: "Verify OTP and reset password",
+        tags: ["Auth"],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["email", "otp", "newPassword", "confirmPassword"],
+                properties: {
+                  email: {
+                    type: "string",
+                    example: "user@example.com",
+                    description: "Registered email address of the user",
+                  },
+                  otp: {
+                    type: "string",
+                    example: "482916",
+                    description: "6-digit OTP received via email",
+                  },
+                  newPassword: {
+                    type: "string",
+                    example: "NewPass@456",
+                    description: "New password (minimum 8 characters)",
+                  },
+                  confirmPassword: {
+                    type: "string",
+                    example: "NewPass@456",
+                    description: "Must match newPassword",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Password reset successfully" },
+          400: {
+            description:
+              "Missing fields, passwords do not match, invalid OTP, or OTP has expired",
+          },
+          500: { description: "Failed to verify OTP and reset password" },
+        },
+      },
+    },
     "/auth/logout": {
       post: {
         summary: "Logout current user",

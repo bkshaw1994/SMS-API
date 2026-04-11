@@ -39,20 +39,6 @@ const systemController = createSystemController({
   pool,
   buildDbError,
 });
-const authController = createAuthController({
-  pool,
-  buildDbError,
-  findFirstExistingColumn,
-  findExistingColumns,
-  addTokenToBlacklist,
-  jwtSecret: config.jwtSecret,
-  jwtExpiresIn: config.jwtExpiresIn,
-  passwordSaltRounds: config.passwordSaltRounds,
-});
-const userDb = createUserDb({
-  pool,
-  findFirstExistingColumn,
-});
 const emailClient = createEmailClient({
   host: config.smtpHost,
   port: config.smtpPort,
@@ -60,6 +46,21 @@ const emailClient = createEmailClient({
   user: config.smtpUser,
   pass: config.smtpPass,
   from: config.smtpFrom,
+});
+const authController = createAuthController({
+  pool,
+  buildDbError,
+  findFirstExistingColumn,
+  findExistingColumns,
+  addTokenToBlacklist,
+  emailClient,
+  jwtSecret: config.jwtSecret,
+  jwtExpiresIn: config.jwtExpiresIn,
+  passwordSaltRounds: config.passwordSaltRounds,
+});
+const userDb = createUserDb({
+  pool,
+  findFirstExistingColumn,
 });
 const userService = createUserService({
   userDb,

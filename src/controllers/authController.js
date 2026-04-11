@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const jwt = require("jsonwebtoken");
 const { hashPassword, verifyPassword } = require("../utils/password");
 
@@ -173,6 +174,7 @@ function createAuthController({
   findFirstExistingColumn,
   findExistingColumns,
   addTokenToBlacklist,
+  emailClient,
   jwtSecret,
   jwtExpiresIn,
   passwordSaltRounds = 10,
@@ -891,12 +893,343 @@ function createAuthController({
     }
   }
 
+  async function changePassword(req, res) {
+    const userId = req.user?.userId;
+    const currentPassword =
+      typeof req.body?.currentPassword === "string"
+        ? req.body.currentPassword
+        : "";
+    const newPassword =
+      typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    const confirmPassword =
+      typeof req.body?.confirmPassword === "string"
+        ? req.body.confirmPassword
+        : "";
+
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: "currentPassword, newPassword, and confirmPassword are required",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: "New password must be at least 8 characters long",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        error: "newPassword and confirmPassword must match",
+      });
+    }
+
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        error: "New password must be different from the current password",
+      });
+    }
+
+    try {
+      const userIdColumn = await findFirstExistingColumn(pool, "users", [
+        "user_id",
+        "id",
+      ]);
+      const passwordColumn = await findFirstExistingColumn(pool, "users", [
+        "password_hash",
+        "passwordhash",
+        "password",
+        "user_password",
+        "passcode",
+      ]);
+
+      if (!userIdColumn || !passwordColumn) {
+        return res.status(500).json({ error: "Failed to change password" });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT "${passwordColumn}"::text AS stored_password
+          FROM "users"
+          WHERE "${userIdColumn}"::text = $1::text
+          LIMIT 1;
+        `,
+        [userId],
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const storedPassword = result.rows[0].stored_password;
+      const passwordValid = await verifyPassword(
+        currentPassword,
+        storedPassword,
+      );
+      if (!passwordValid) {
+        return res.status(400).json({ error: "Current password is incorrect" });
+      }
+
+      const passwordHash = await hashPassword(
+        newPassword,
+        Number(passwordSaltRounds),
+      );
+
+      await pool.query(
+        `
+          UPDATE "users"
+          SET "${passwordColumn}" = $1
+          WHERE "${userIdColumn}"::text = $2::text;
+        `,
+        [passwordHash, userId],
+      );
+
+      return res.json({
+        success: true,
+        message: "Password changed successfully",
+      });
+    } catch (error) {
+      return res
+        .status(500)
+        .json(buildDbError(error, "Failed to change password"));
+    }
+  }
+
+  async function forgotPassword(req, res) {
+    const email =
+      typeof req.body?.email === "string" ? req.body.email.trim() : "";
+
+    if (!email) {
+      return res.status(400).json({ error: "email is required" });
+    }
+
+    // Always return a generic message to prevent email enumeration
+    const genericResponse = {
+      success: true,
+      message:
+        "If that email is registered, an OTP has been sent to the address.",
+    };
+
+    try {
+      const userIdColumn = await findFirstExistingColumn(pool, "users", [
+        "user_id",
+        "id",
+      ]);
+      const resetTokenColumn = await findFirstExistingColumn(pool, "users", [
+        "reset_token",
+      ]);
+      const resetTokenExpiresColumn = await findFirstExistingColumn(
+        pool,
+        "users",
+        ["reset_token_expires"],
+      );
+
+      if (!userIdColumn || !resetTokenColumn || !resetTokenExpiresColumn) {
+        return res
+          .status(500)
+          .json({ error: "Forgot password is not available" });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT "${userIdColumn}"::text AS user_id
+          FROM "users"
+          WHERE LOWER("email"::text) = LOWER($1)
+          LIMIT 1;
+        `,
+        [email],
+      );
+
+      if (result.rowCount === 0) {
+        return res.json(genericResponse);
+      }
+
+      const userId = result.rows[0].user_id;
+      const otp = String(crypto.randomInt(100000, 1000000));
+      const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+
+      await pool.query(
+        `
+          UPDATE "users"
+          SET "${resetTokenColumn}" = $1,
+              "${resetTokenExpiresColumn}" = $2
+          WHERE "${userIdColumn}"::text = $3::text;
+        `,
+        [otp, otpExpires, userId],
+      );
+
+      await emailClient.sendOtpEmail({ to: email, otp });
+
+      return res.json(genericResponse);
+    } catch {
+      return res
+        .status(500)
+        .json({ error: "Failed to process forgot password request" });
+    }
+  }
+
+  async function forgotPasswordVerify(req, res) {
+    const email =
+      typeof req.body?.email === "string" ? req.body.email.trim() : "";
+    const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+    const newPassword =
+      typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
+    const confirmPassword =
+      typeof req.body?.confirmPassword === "string"
+        ? req.body.confirmPassword
+        : "";
+
+    if (!email || !otp || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: "email, otp, newPassword, and confirmPassword are required",
+      });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        error: "New password must be at least 8 characters long",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        error: "newPassword and confirmPassword must match",
+      });
+    }
+
+    try {
+      const userIdColumn = await findFirstExistingColumn(pool, "users", [
+        "user_id",
+        "id",
+      ]);
+      const passwordColumn = await findFirstExistingColumn(pool, "users", [
+        "password_hash",
+        "passwordhash",
+        "password",
+        "user_password",
+        "passcode",
+      ]);
+      const mustChangePasswordColumn = await findFirstExistingColumn(
+        pool,
+        "users",
+        ["must_change_password"],
+      );
+      const resetTokenColumn = await findFirstExistingColumn(pool, "users", [
+        "reset_token",
+      ]);
+      const resetTokenExpiresColumn = await findFirstExistingColumn(
+        pool,
+        "users",
+        ["reset_token_expires"],
+      );
+      const tempPasswordHashColumn = await findFirstExistingColumn(
+        pool,
+        "users",
+        ["temp_password_hash"],
+      );
+
+      if (
+        !userIdColumn ||
+        !passwordColumn ||
+        !resetTokenColumn ||
+        !resetTokenExpiresColumn
+      ) {
+        return res
+          .status(500)
+          .json({ error: "Forgot password verify is not available" });
+      }
+
+      const result = await pool.query(
+        `
+          SELECT
+            "${userIdColumn}"::text AS user_id,
+            "${resetTokenColumn}" AS stored_otp,
+            "${resetTokenExpiresColumn}" AS otp_expires
+          FROM "users"
+          WHERE LOWER("email"::text) = LOWER($1)
+          LIMIT 1;
+        `,
+        [email],
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(400).json({ error: "Invalid email or OTP" });
+      }
+
+      const { user_id, stored_otp, otp_expires } = result.rows[0];
+
+      if (!stored_otp || stored_otp !== otp) {
+        return res.status(400).json({ error: "Invalid OTP" });
+      }
+
+      const expiresAt = otp_expires ? new Date(otp_expires) : null;
+      if (
+        !expiresAt ||
+        Number.isNaN(expiresAt.getTime()) ||
+        expiresAt <= new Date()
+      ) {
+        return res.status(400).json({ error: "OTP has expired" });
+      }
+
+      const passwordHash = await hashPassword(
+        newPassword,
+        Number(passwordSaltRounds),
+      );
+
+      const setClauses = [
+        `"${passwordColumn}" = $1`,
+        `"${resetTokenColumn}" = $2`,
+        `"${resetTokenExpiresColumn}" = $3`,
+      ];
+      const values = [passwordHash, null, null];
+
+      if (mustChangePasswordColumn) {
+        setClauses.push(
+          `"${mustChangePasswordColumn}" = $${values.length + 1}`,
+        );
+        values.push(false);
+      }
+
+      if (tempPasswordHashColumn) {
+        setClauses.push(`"${tempPasswordHashColumn}" = $${values.length + 1}`);
+        values.push(null);
+      }
+
+      values.push(user_id);
+
+      await pool.query(
+        `
+          UPDATE "users"
+          SET ${setClauses.join(", ")}
+          WHERE "${userIdColumn}"::text = $${values.length}::text;
+        `,
+        values,
+      );
+
+      return res.json({
+        success: true,
+        message: "Password reset successfully",
+      });
+    } catch {
+      return res
+        .status(500)
+        .json({ error: "Failed to verify OTP and reset password" });
+    }
+  }
+
   return {
     renderResetPasswordPage,
     resetPassword,
     validateLogin,
     superAdminLogin,
     logout,
+    changePassword,
+    forgotPassword,
+    forgotPasswordVerify,
   };
 }
 
